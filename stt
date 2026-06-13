@@ -471,6 +471,11 @@ def cmd_stream(args):
     SPEECH_WINDOW = 1.5        # seconds of recent audio to scan
     HANGOVER_INTERVALS = 3     # keep sending N intervals after speech ends
 
+    # Print gate: suppress prints during extended silence/hangover.
+    # whisper may return minor text variations on the same audio;
+    # without this gate, every variation triggers a reprint.
+    allow_print = False
+
     def on_interrupt(signum, frame):
         nonlocal interrupted
         interrupted = True
@@ -509,13 +514,18 @@ def cmd_stream(args):
 
                 if has_speech:
                     silence_streak = 0
+                    allow_print = True   # active speech: allow live captioning
                 else:
                     silence_streak += 1
-                    # Hangover: keep sending briefly after speech ends to
-                    # capture trailing words, then stop to avoid hallucinations.
+                    # Hangover: keep sending briefly after speech ends, but
+                    # only allow ONE more print to capture final text.
+                    if silence_streak == 1:
+                        allow_print = True   # first silent frame: commit final text
+                    else:
+                        allow_print = False  # extended silence: suppress reprints
                     if silence_streak > HANGOVER_INTERVALS:
                         if args.verbose:
-                            print(f"  [{len(ring)//bytes_per_sec:.1f}s] rms={rms:.4f} (silent)",
+                            print(f"  [{len(ring)//bytes_per_sec:.1f}s] rms={rms:.4f} (muted)",
                                   file=sys.stderr, flush=True)
                         continue
 
@@ -528,8 +538,8 @@ def cmd_stream(args):
                     print(f"  [{len(ring)//bytes_per_sec:.1f}s, rms={rms:.4f}] → {text!r}",
                           file=sys.stderr, flush=True)
 
-                # Filter hallucinations and duplicates
-                if text and not _is_hallucination(text) and text != last_text:
+                # Filter: suppress during extended silence, dedup, block garbage
+                if text and not _is_hallucination(text) and text != last_text and allow_print:
                     if args.json:
                         print(json.dumps({
                             "chunk": chunk_num,
@@ -537,11 +547,9 @@ def cmd_stream(args):
                             "text": text,
                         }), flush=True)
                     else:
-                        was_silent = silence_streak > 4
-                        ending = "\n" if was_silent or not ever_printed else ""
+                        ending = "\n" if not ever_printed else ""
                         print(f"\r\033[K{text}", end=ending, flush=True)
                     last_text = text
-                    silence_streak = 0
                     ever_printed = True
 
     except KeyboardInterrupt:
