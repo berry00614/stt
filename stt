@@ -465,6 +465,12 @@ def cmd_stream(args):
     interrupted = False
     chunk_num = 0              # for per-chunk filenames
 
+    # Energy gate: only check recent audio so silence isn't masked by
+    # earlier speech. Hangover keeps sending briefly after speech ends
+    # to capture trailing words.
+    SPEECH_WINDOW = 1.5        # seconds of recent audio to scan
+    HANGOVER_INTERVALS = 3     # keep sending N intervals after speech ends
+
     def on_interrupt(signum, frame):
         nonlocal interrupted
         interrupted = True
@@ -493,16 +499,25 @@ def cmd_stream(args):
             if now - last_send >= INTERVAL and len(ring) >= bytes_per_sec // 2:
                 last_send = now
 
-                # Energy gate: skip if no speech detected (prevents hallucination)
-                # _audio_rms / _has_speech now accept bytearray directly (no copy)
-                rms = _audio_rms(ring)
-                if not _has_speech(ring, threshold=args.silence):
+                # Energy gate: check only RECENT audio (not full buffer).
+                # Once speech stops, the recent window goes silent even though
+                # earlier parts of the buffer still have speech energy.
+                recent_len = min(len(ring), int(bytes_per_sec * SPEECH_WINDOW))
+                recent = ring[-recent_len:]
+                rms = _audio_rms(recent)
+                has_speech = _has_speech(recent, threshold=args.silence)
+
+                if has_speech:
+                    silence_streak = 0
+                else:
                     silence_streak += 1
-                    if args.verbose:
-                        print(f"  [{len(ring)//bytes_per_sec:.1f}s] rms={rms:.4f} (silent)",
-                              file=sys.stderr, flush=True)
-                    continue
-                silence_streak = 0
+                    # Hangover: keep sending briefly after speech ends to
+                    # capture trailing words, then stop to avoid hallucinations.
+                    if silence_streak > HANGOVER_INTERVALS:
+                        if args.verbose:
+                            print(f"  [{len(ring)//bytes_per_sec:.1f}s] rms={rms:.4f} (silent)",
+                                  file=sys.stderr, flush=True)
+                        continue
 
                 # Build WAV in memory and POST directly (no temp file)
                 wav = _build_wav(ring)
