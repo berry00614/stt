@@ -476,6 +476,10 @@ def cmd_stream(args):
     # without this gate, every variation triggers a reprint.
     allow_print = False
 
+    # Track whether speech just resumed after a pause, so we start a
+    # new line instead of overwriting the previous utterance.
+    need_newline = False
+
     def on_interrupt(signum, frame):
         nonlocal interrupted
         interrupted = True
@@ -513,6 +517,9 @@ def cmd_stream(args):
                 has_speech = _has_speech(recent, threshold=args.silence)
 
                 if has_speech:
+                    # Speech resumed after a pause → start new line
+                    if silence_streak >= 2:
+                        need_newline = True
                     silence_streak = 0
                     allow_print = True   # active speech: allow live captioning
                 else:
@@ -547,6 +554,10 @@ def cmd_stream(args):
                             "text": text,
                         }), flush=True)
                     else:
+                        # Speech resumed after a pause → preserve previous line
+                        if need_newline:
+                            print()
+                            need_newline = False
                         ending = "\n" if not ever_printed else ""
                         print(f"\r\033[K{text}", end=ending, flush=True)
                     last_text = text
