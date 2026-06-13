@@ -456,6 +456,7 @@ def cmd_stream(args):
     ring = bytearray()         # full accumulated audio
     last_text = ""
     silence_streak = 0
+    ever_printed = False       # track first output for newline
     interrupted = False
 
     def on_interrupt(signum, frame):
@@ -509,10 +510,14 @@ def cmd_stream(args):
                     print(f"  [{len(ring)//bytes_per_sec:.1f}s, rms={rms:.4f}] → {text!r}",
                           file=sys.stderr, flush=True)
 
-                # Filter hallucinations, print full text when it changes
+                # Live caption: overwrite current line, newline only after 2s pause
                 if text and not _is_hallucination(text) and text != last_text:
-                    print(text, flush=True)
+                    was_silent = silence_streak > 4  # check before reset
+                    ending = "\n" if was_silent or not ever_printed else ""
+                    print(f"\r\033[K{text}", end=ending, flush=True)
                     last_text = text
+                    silence_streak = 0
+                    ever_printed = True
 
     except KeyboardInterrupt:
         pass
@@ -523,7 +528,9 @@ def cmd_stream(args):
         ffmpeg_proc.wait()
         server_proc.terminate()
         server_proc.wait()
-        print("\nStopped.", file=sys.stderr)
+        if ever_printed:
+            print()  # final newline so shell prompt doesn't overwrite
+        print("Stopped.", file=sys.stderr)
 
 
 # ── Main ────────────────────────────────────────────────────────────
