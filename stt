@@ -1,0 +1,395 @@
+#!/usr/bin/env python3
+"""
+stt — Local speech-to-text CLI for macOS using whisper.cpp
+
+Subcommands:
+    stt record [--duration SEC] [--output FILE]
+        Record from mic and transcribe. Ctrl+C to stop if no --duration.
+
+    stt file <audio_file>
+        Transcribe an existing audio file (wav, mp3, flac, ogg).
+
+    stt stream
+        Real-time streaming transcription with rolling windows.
+
+    stt list-devices
+        List available audio input devices.
+
+Requirements:
+    - whisper.cpp built at ~/projects/stt/whisper.cpp/build/bin/whisper-cli
+    - ffmpeg for audio capture
+    - Model downloaded to ~/projects/stt/whisper.cpp/models/
+
+For agent use: pipe-friendly JSON output with --json flag.
+"""
+
+import argparse
+import json
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import textwrap
+from pathlib import Path
+
+# ── Paths ───────────────────────────────────────────────────────────
+PROJ = Path(__file__).resolve().parent
+WHISPER_CLI = PROJ / "whisper.cpp" / "build" / "bin" / "whisper-cli"
+MODELS_DIR  = PROJ / "whisper.cpp" / "models"
+DEFAULT_MODEL = "ggml-small.bin"
+
+# ── Helpers ─────────────────────────────────────────────────────────
+
+def die(msg: str, code: int = 1):
+    print(f"stt: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def resolve_model(name: str) -> Path:
+    """Resolve a model name to full path."""
+    if "/" in name or os.path.isabs(name):
+        p = Path(name)
+        if p.exists():
+            return p
+    p = MODELS_DIR / name
+    if p.exists():
+        return p
+    die(f"Model not found: {name} (looked in {MODELS_DIR})")
+
+
+def check_deps():
+    """Ensure whisper-cli and ffmpeg are available."""
+    if not WHISPER_CLI.exists():
+        die(f"whisper-cli not found at {WHISPER_CLI}. Run build step first.")
+    if not shutil.which("ffmpeg"):
+        die("ffmpeg not found in PATH. Install with: brew install ffmpeg")
+
+
+def whisper_transcribe(
+    audio: Path,
+    model: str,
+    language: str = "auto",
+    json_out: bool = False,
+    progress: bool = False,
+    timestamps: bool = False,
+) -> str:
+    """Run whisper-cli and return transcription text."""
+    model_path = resolve_model(model)
+
+    cmd = [
+        str(WHISPER_CLI),
+        "-m", str(model_path),
+        "-f", str(audio),
+        "-l", language,
+        "-oj" if json_out else "-otxt",
+    ]
+
+    if not timestamps and not json_out:
+        cmd.append("--no-timestamps")
+    if progress:
+        cmd.append("-pp")
+    if json_out:
+        cmd.append("-of")
+        cmd.append(str(audio) + ".whisper")
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if result.returncode != 0:
+            die(f"whisper-cli failed:\n{result.stderr}")
+
+        if json_out:
+            # whisper-cli writes JSON to file, read it back
+            json_path = str(audio) + ".whisper.json"
+            if os.path.exists(json_path):
+                with open(json_path) as f:
+                    return f.read()
+            return result.stdout
+        else:
+            return result.stdout.strip()
+    except subprocess.TimeoutExpired:
+        die("Transcription timed out (>10 min). Try a shorter audio or faster model.")
+
+
+def list_devices():
+    """Print available AVFoundation audio input devices."""
+    result = subprocess.run(
+        ["ffmpeg", "-f", "avfoundation", "-list_devices", "true", "-i", ""],
+        capture_output=True, text=True,
+    )
+    # ffmpeg prints device list to stderr; extract just audio devices
+    in_audio = False
+    for line in result.stderr.split("\n"):
+        if "AVFoundation audio devices:" in line:
+            in_audio = True
+            continue
+        if in_audio:
+            if "Error" in line or not line.strip():
+                break
+            # Parse: [AVFoundation indev ...] [0] Device Name
+            if "] [" in line:
+                label = line.split("] ", 2)[-1] if "] " in line else line
+                print(label)
+
+
+# ── Commands ────────────────────────────────────────────────────────
+
+def cmd_record(args):
+    """Record audio from mic, then transcribe."""
+    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+
+    duration = args.duration
+    ended_by_signal = False
+
+    def on_signal(sig, frame):
+        nonlocal ended_by_signal
+        ended_by_signal = True
+
+    signal.signal(signal.SIGINT, on_signal)
+    signal.signal(signal.SIGTERM, on_signal)
+
+    # Build ffmpeg command
+    ffmpeg_cmd = [
+        "ffmpeg",
+        "-f", "avfoundation",
+        "-i", ":0",           # default microphone
+        "-ar", "16000",       # whisper native sample rate
+        "-ac", "1",           # mono
+        "-sample_fmt", "s16",
+        "-y",
+    ]
+    if duration:
+        ffmpeg_cmd.extend(["-t", str(duration)])
+    ffmpeg_cmd.append(tmp_path)
+
+    if duration:
+        status_line = f"Recording {duration}s..."
+    else:
+        status_line = "Recording... (Ctrl+C to stop)"
+
+    print(status_line, file=sys.stderr, end="", flush=True)
+
+    try:
+        proc = subprocess.Popen(
+            ffmpeg_cmd,
+            stderr=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+        )
+        proc.wait()
+    except KeyboardInterrupt:
+        proc.terminate()
+        proc.wait()
+
+    print(" done.", file=sys.stderr)
+    print(f"Transcribing...", file=sys.stderr, end="", flush=True)
+
+    text = whisper_transcribe(
+        Path(tmp_path),
+        model=args.model,
+        language=args.language,
+        json_out=args.json,
+        progress=args.progress,
+    )
+
+    print(" done.", file=sys.stderr)
+
+    if args.json:
+        print(text)
+    else:
+        print(text)
+
+    # Save to output file if specified
+    if args.output:
+        with open(args.output, "w") as f:
+            f.write(text)
+        print(f"Saved to {args.output}", file=sys.stderr)
+
+    os.unlink(tmp_path)
+
+
+def cmd_file(args):
+    """Transcribe an existing audio file."""
+    audio = Path(args.input)
+    if not audio.exists():
+        die(f"File not found: {args.input}")
+
+    print(f"Transcribing {audio.name}...", file=sys.stderr, end="", flush=True)
+
+    text = whisper_transcribe(
+        audio,
+        model=args.model,
+        language=args.language,
+        json_out=args.json,
+        progress=args.progress,
+    )
+
+    print(" done.", file=sys.stderr)
+
+    if args.json:
+        print(text)
+    else:
+        print(text)
+
+    if args.output:
+        with open(args.output, "w") as f:
+            f.write(text)
+
+
+def cmd_stream(args):
+    """Real-time streaming transcription with rolling windows."""
+    # Strategy: continuous recording split into overlapping chunks
+    # Each chunk transcribed independently, results streamed with dedup
+
+    import threading
+
+    CHUNK_SEC = args.chunk
+    OVERLAP_SEC = 1.0
+    model_path = resolve_model(args.model)
+
+    chunk_dir = tempfile.mkdtemp(prefix="stt_stream_")
+    chunks_done = []
+    lock = threading.Lock()
+    running = True
+
+    def capture_loop():
+        """Capture audio in chunks continuously."""
+        chunk_idx = 0
+        while running:
+            chunk_path = os.path.join(chunk_dir, f"chunk_{chunk_idx:04d}.wav")
+            cmd = [
+                "ffmpeg",
+                "-f", "avfoundation",
+                "-i", ":0",
+                "-ar", "16000",
+                "-ac", "1",
+                "-sample_fmt", "s16",
+                "-t", str(CHUNK_SEC),
+                "-y",
+                chunk_path,
+            ]
+            subprocess.run(cmd, capture_output=True)
+            if os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 1000:
+                with lock:
+                    chunks_done.append(chunk_idx)
+            chunk_idx += 1
+            time.sleep(0.1)  # small gap between captures
+
+    # Start capture thread
+    capturer = threading.Thread(target=capture_loop, daemon=True)
+    capturer.start()
+
+    print(f"Streaming transcription (chunk={CHUNK_SEC}s, Ctrl+C to stop)...",
+          file=sys.stderr)
+
+    transcript_idx = 0
+    last_text = ""
+
+    try:
+        while capturer.is_alive() or chunks_done:
+            with lock:
+                pending = list(chunks_done)
+
+            while transcript_idx < len(pending):
+                idx = pending[transcript_idx]
+                chunk_path = os.path.join(chunk_dir, f"chunk_{idx:04d}.wav")
+
+                if os.path.exists(chunk_path):
+                    text = whisper_transcribe(
+                        Path(chunk_path),
+                        model=args.model,
+                        language=args.language,
+                        json_out=False,
+                        progress=False,
+                    )
+                    # Simple dedup: skip if same as last
+                    if text and text != last_text:
+                        print(text, flush=True)
+                        last_text = text
+
+                transcript_idx += 1
+
+            time.sleep(0.5)
+
+    except KeyboardInterrupt:
+        running = False
+        print("\nStopping...", file=sys.stderr)
+
+    # Cleanup
+    import shutil
+    shutil.rmtree(chunk_dir, ignore_errors=True)
+
+
+# ── Main ────────────────────────────────────────────────────────────
+
+def main():
+    check_deps()
+
+    parser = argparse.ArgumentParser(
+        prog="stt",
+        description="Local speech-to-text using whisper.cpp on macOS",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    # ── record ──
+    p = sub.add_parser("record", help="Record from mic and transcribe")
+    p.add_argument("-d", "--duration", type=int, default=None,
+                   help="Recording duration in seconds (unlimited if omitted)")
+    p.add_argument("-o", "--output", default=None,
+                   help="Save transcription to file")
+    p.add_argument("-m", "--model", default=DEFAULT_MODEL,
+                   help="Model filename or path")
+    p.add_argument("-l", "--language", default="auto",
+                   help="Language code (auto/zh/en/ja/...)")
+    p.add_argument("--json", action="store_true",
+                   help="Output JSON with timestamps and confidence")
+    p.add_argument("-p", "--progress", action="store_true",
+                   help="Show whisper progress bar")
+    p.set_defaults(func=cmd_record)
+
+    # ── file ──
+    p = sub.add_parser("file", help="Transcribe existing audio file")
+    p.add_argument("input", help="Audio file path (wav/mp3/flac/ogg)")
+    p.add_argument("-o", "--output", default=None,
+                   help="Save transcription to file")
+    p.add_argument("-m", "--model", default=DEFAULT_MODEL,
+                   help="Model filename or path")
+    p.add_argument("-l", "--language", default="auto",
+                   help="Language code (auto/zh/en/ja/...)")
+    p.add_argument("--json", action="store_true",
+                   help="Output JSON with timestamps and confidence")
+    p.add_argument("-p", "--progress", action="store_true",
+                   help="Show whisper progress bar")
+    p.set_defaults(func=cmd_file)
+
+    # ── stream ──
+    p = sub.add_parser("stream", help="Real-time streaming transcription")
+    p.add_argument("-m", "--model", default=DEFAULT_MODEL,
+                   help="Model filename or path")
+    p.add_argument("-l", "--language", default="auto",
+                   help="Language code (auto/zh/en/ja/...)")
+    p.add_argument("-c", "--chunk", type=int, default=5,
+                   help="Chunk duration in seconds (default: 5)")
+    p.add_argument("--json", action="store_true",
+                   help="Output JSON lines")
+    p.set_defaults(func=cmd_stream)
+
+    # ── list-devices ──
+    p = sub.add_parser("list-devices", help="List audio input devices")
+    p.set_defaults(func=lambda _: list_devices())
+
+    args = parser.parse_args()
+
+    if args.command is None:
+        parser.print_help()
+        sys.exit(0)
+
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

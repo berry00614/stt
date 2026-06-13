@@ -1,0 +1,4 @@
+whisper.cpp/build/
+whisper.cpp/models/*.bin
+*.tar.gz
+__pycache__/
