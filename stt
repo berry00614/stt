@@ -28,11 +28,13 @@ import json
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
-import time
 import textwrap
+import time
+import urllib.request
 from pathlib import Path
 
 # ── Paths ───────────────────────────────────────────────────────────
@@ -108,9 +110,91 @@ def whisper_transcribe(
                     return f.read()
             return result.stdout
         else:
-            return result.stdout.strip()
+            text = result.stdout.strip()
+            if text in ("[BLANK_AUDIO]", "[ Silence ]"):
+                return ""
+            return text
     except subprocess.TimeoutExpired:
         die("Transcription timed out (>10 min). Try a shorter audio or faster model.")
+
+
+# ── Server helpers (for stream mode) ────────────────────────────────
+
+WHISPER_SERVER = PROJ / "whisper.cpp" / "build" / "bin" / "whisper-server"
+
+def _find_free_port() -> int:
+    """Return an available TCP port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _start_whisper_server(model_path: Path, language: str, port: int) -> subprocess.Popen:
+    """Start whisper-server and wait until it's ready."""
+    proc = subprocess.Popen(
+        [
+            str(WHISPER_SERVER),
+            "-m", str(model_path),
+            "-l", language,
+            "--host", "127.0.0.1",
+            "--port", str(port),
+            "--no-timestamps",
+            "-t", "6",           # thread count
+            "-p", "3",           # processor count
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    # Wait for server to be ready (poll /inference with OPTIONS)
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        try:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/inference", method="OPTIONS"
+            )
+            urllib.request.urlopen(req, timeout=1)
+            return proc
+        except Exception:
+            time.sleep(0.3)
+
+    proc.kill()
+    die("whisper-server failed to start within 15s")
+
+
+def _transcribe_via_server(audio_path: Path, port: int, language: str) -> str:
+    """POST an audio file to whisper-server, return transcription text."""
+    import io
+
+    boundary = "----WhisperBoundary"
+    with open(audio_path, "rb") as f:
+        data = f.read()
+
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{audio_path.name}"\r\n'
+        f"Content-Type: audio/wav\r\n\r\n"
+    ).encode() + data + f"\r\n--{boundary}--\r\n".encode()
+
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}/inference",
+        data=body,
+        headers={
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read())
+            text = result.get("text", "").strip()
+            # Filter blank/silence markers
+            if text in ("", "[BLANK_AUDIO]", "[ Silence ]"):
+                return ""
+            return text
+    except Exception as e:
+        print(f"  [server error: {e}]", file=sys.stderr)
+        return ""
 
 
 def list_devices():
@@ -240,87 +324,81 @@ def cmd_file(args):
 
 
 def cmd_stream(args):
-    """Real-time streaming transcription with rolling windows."""
-    # Strategy: continuous recording split into overlapping chunks
-    # Each chunk transcribed independently, results streamed with dedup
-
-    import threading
-
+    """Real-time streaming via whisper-server (model loaded once)."""
     CHUNK_SEC = args.chunk
-    OVERLAP_SEC = 1.0
     model_path = resolve_model(args.model)
 
-    chunk_dir = tempfile.mkdtemp(prefix="stt_stream_")
-    chunks_done = []
-    lock = threading.Lock()
-    running = True
+    # 1. Start whisper-server (model loaded once, stays resident)
+    port = _find_free_port()
+    print(f"Starting whisper-server (port {port})...", file=sys.stderr, end="", flush=True)
+    server_proc = _start_whisper_server(model_path, args.language, port)
+    print(" ready.", file=sys.stderr)
 
-    def capture_loop():
-        """Capture audio in chunks continuously."""
-        chunk_idx = 0
-        while running:
-            chunk_path = os.path.join(chunk_dir, f"chunk_{chunk_idx:04d}.wav")
-            cmd = [
-                "ffmpeg",
-                "-f", "avfoundation",
-                "-i", ":0",
-                "-ar", "16000",
-                "-ac", "1",
-                "-sample_fmt", "s16",
-                "-t", str(CHUNK_SEC),
-                "-y",
-                chunk_path,
-            ]
-            subprocess.run(cmd, capture_output=True)
-            if os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 1000:
-                with lock:
-                    chunks_done.append(chunk_idx)
-            chunk_idx += 1
-            time.sleep(0.1)  # small gap between captures
+    # 2. Start ffmpeg segment muxer — one process, continuous chunk output
+    seg_dir = tempfile.mkdtemp(prefix="stt_stream_")
+    ffmpeg_proc = subprocess.Popen(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-f", "avfoundation", "-i", ":0",
+            "-ar", "16000", "-ac", "1", "-sample_fmt", "s16",
+            "-f", "segment",
+            "-segment_time", str(CHUNK_SEC),
+            "-reset_timestamps", "1",
+            "-y",
+            os.path.join(seg_dir, "chunk_%04d.wav"),
+        ],
+        stderr=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+    )
 
-    # Start capture thread
-    capturer = threading.Thread(target=capture_loop, daemon=True)
-    capturer.start()
-
-    print(f"Streaming transcription (chunk={CHUNK_SEC}s, Ctrl+C to stop)...",
+    print(f"Streaming (chunk={CHUNK_SEC}s, Ctrl+C to stop)...\n",
           file=sys.stderr)
 
-    transcript_idx = 0
+    processed: set = set()
     last_text = ""
+    interrupted = False
+
+    def on_interrupt(signum, frame):
+        nonlocal interrupted
+        interrupted = True
+
+    prev_sigint = signal.signal(signal.SIGINT, on_interrupt)
+    prev_sigterm = signal.signal(signal.SIGTERM, on_interrupt)
 
     try:
-        while capturer.is_alive() or chunks_done:
-            with lock:
-                pending = list(chunks_done)
+        while not interrupted and ffmpeg_proc.poll() is None:
+            chunks = sorted(Path(seg_dir).glob("chunk_*.wav"))
+            for chunk in chunks:
+                if chunk.name in processed:
+                    continue
+                # Brief pause so ffmpeg finishes writing
+                time.sleep(0.15)
+                if chunk.stat().st_size < 1000:
+                    processed.add(chunk.name)
+                    continue
 
-            while transcript_idx < len(pending):
-                idx = pending[transcript_idx]
-                chunk_path = os.path.join(chunk_dir, f"chunk_{idx:04d}.wav")
+                text = _transcribe_via_server(chunk, port, args.language)
+                processed.add(chunk.name)
 
-                if os.path.exists(chunk_path):
-                    text = whisper_transcribe(
-                        Path(chunk_path),
-                        model=args.model,
-                        language=args.language,
-                        json_out=False,
-                        progress=False,
-                    )
-                    # Simple dedup: skip if same as last
-                    if text and text != last_text:
-                        print(text, flush=True)
-                        last_text = text
+                if text and text != last_text:
+                    print(text, flush=True)
+                    last_text = text
 
-                transcript_idx += 1
-
-            time.sleep(0.5)
+            time.sleep(0.2)
 
     except KeyboardInterrupt:
-        running = False
-        print("\nStopping...", file=sys.stderr)
-
-    # Cleanup
-    import shutil
-    shutil.rmtree(chunk_dir, ignore_errors=True)
+        pass
+    finally:
+        signal.signal(signal.SIGINT, prev_sigint)
+        signal.signal(signal.SIGTERM, prev_sigterm)
+        ffmpeg_proc.terminate()
+        ffmpeg_proc.wait()
+        server_proc.terminate()
+        server_proc.wait()
+        shutil.rmtree(seg_dir, ignore_errors=True)
+        print("\nStopped.", file=sys.stderr)
 
 
 # ── Main ────────────────────────────────────────────────────────────
@@ -372,8 +450,8 @@ def main():
                    help="Model filename or path")
     p.add_argument("-l", "--language", default="auto",
                    help="Language code (auto/zh/en/ja/...)")
-    p.add_argument("-c", "--chunk", type=int, default=5,
-                   help="Chunk duration in seconds (default: 5)")
+    p.add_argument("-c", "--chunk", type=int, default=3,
+                   help="Chunk duration in seconds (default: 3)")
     p.add_argument("--json", action="store_true",
                    help="Output JSON lines")
     p.set_defaults(func=cmd_stream)
