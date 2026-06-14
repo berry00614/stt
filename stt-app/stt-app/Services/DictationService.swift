@@ -60,7 +60,7 @@ final class DictationService: ObservableObject {
 
     // MARK: - Recording
 
-    private func startRecording() async {
+    func startRecording() async {
         guard state == .idle else { return }
 
         let hasPermission = await audioCapture.requestPermission()
@@ -92,7 +92,7 @@ final class DictationService: ObservableObject {
         }
     }
 
-    private func stopAndTranscribe() async {
+    func stopAndTranscribe() async {
         guard case .recording = state else { return }
 
         durationTimer?.invalidate()
@@ -144,7 +144,7 @@ final class DictationService: ObservableObject {
         }
     }
 
-    private func cancelRecording() {
+    func cancelRecording() {
         durationTimer?.invalidate()
         durationTimer = nil
         audioCapture.stop()

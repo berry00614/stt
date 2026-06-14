@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Preferences window accessible from the menu bar.
+/// Settings window accessible from the menu bar.
 struct SettingsView: View {
     @AppStorage("model_name") private var modelName = "ggml-small.bin"
     @AppStorage("language") private var language = "auto"

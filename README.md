@@ -143,16 +143,20 @@ M5 Max + 128GB 实测：small 模型推理 ~80ms/次，large-v3-turbo ~200ms/次
 
 1. 用 Xcode 打开 `stt-app/stt-app.xcodeproj`，Build & Run（⌘R）
 2. 菜单栏出现 🎤 图标
-3. **按住右 Option 键** → 开始录音 → 松开 → 自动转写并粘贴到光标位置
-4. 点击菜单栏图标 → Start Captions → 打开浮动字幕窗口
-5. 点击菜单栏图标 → Preferences → 配置模型、语言等
+3. 点击菜单栏图标 → **Show Main Window** → 主窗口有三个功能区
+4. **按住右 Option 键** → 开始录音 → 松开 → 自动转写并粘贴到光标位置
+5. 主窗口中可点击录音按钮替代热键，或启动实时字幕，或选择文件转写
+6. Preferences（⌘,）在 macOS 系统菜单栏中（stt → Preferences…）
 
 ### 功能
 
 | 功能 | 描述 |
 |------|------|
-| **全局热键** | 按住右 Option 键录音，松开自动转写粘贴 |
+| **主窗口** | 三个功能区：听写、实时字幕、文件转写 |
+| **听写 Dictation** | 点击按钮录音/停止，或按住右 Option 热键，自动转写粘贴 |
 | **实时字幕** | 浮动 NSPanel 窗口，置顶显示流转写结果 |
+| **文件转写** | 选择音频文件 → AVFoundation 转 WAV → whisper-cli 转写 |
+| **模型选择** | 主窗口中可为听写和字幕分别选择模型 |
 | **抗幻觉** | 三层防护：能量门控 + 语音概率阈值 + 模式匹配过滤 |
 | **文本规范化** | 繁体→简体中文转换，标点规范化 |
 | **Dock 自适应** | 有窗口时显示 Dock 图标，仅菜单栏时隐藏 |
@@ -170,22 +174,29 @@ M5 Max + 128GB 实测：small 模型推理 ~80ms/次，large-v3-turbo ~200ms/次
 ### 架构
 
 ```
-右 Option 键 (Carbon Event)
+菜单栏图标 (MenuBarExtra) ── 快捷键听写 + 快速访问
     │
     ▼
-AVAudioEngine (麦克风捕获)
-    │  float32 PCM 流
-    ▼
-WhisperServerManager (whisper-server 子进程)
-    │  HTTP POST /inference
-    ▼
-TranscriptionService ──► CaptionOverlayView (实时字幕)
+主窗口 (MainWindowView) ── 听写 / 实时字幕 / 文件转写
     │
-    ▼
-AntiHallucination + TextNormalizer
+    ├── 听写 Dictation
+    │   └── 点击录音按钮 或 按住右 Option 键
+    │       │  PCM 流 (AVAudioEngine)
+    │       ▼
+    │   构建 WAV → whisper-cli → 转写 + 粘贴
     │
-    ▼
-PasteController (CGEventPost → Cmd+V)
+    ├── 实时字幕 Live Captions
+    │   └── whisper-server 长驻内存
+    │       │  HTTP POST /inference
+    │       ▼
+    │   TranscriptionService → CaptionOverlayView (浮动字幕)
+    │
+    └── 文件转写 File Transcription
+        └── 选择文件 → AVFoundation 转 WAV → whisper-cli → 结果
+
+所有转写经 AntiHallucination + TextNormalizer 过滤
+
+Preferences (Settings scene) ── ⌘, 系统菜单，独立窗口
 ```
 
 ### 构建
@@ -217,8 +228,8 @@ stt file audio.mp3 -l zh   # 中文文件显式指定语言
 │   ├── stt-app.xcodeproj/ # Xcode 项目
 │   └── stt-app/
 │       ├── Models/        # AppSettings, TranscriptionChunk
-│       ├── Services/      # 录音、转写、热键、粘贴、抗幻觉
-│       └── Views/         # 菜单栏、字幕、HUD、设置
+│       ├── Services/      # 录音、转写、热键、粘贴、抗幻觉、文件转写
+│       └── Views/         # 主窗口、菜单栏、字幕、HUD、设置
 ├── whisper.cpp/           # whisper.cpp 引擎
 │   ├── build/bin/
 │   │   ├── whisper-cli       # 批处理转写

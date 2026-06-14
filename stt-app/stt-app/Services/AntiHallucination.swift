@@ -128,7 +128,7 @@ enum AntiHallucination {
 
     /// Build a WAV container around raw PCM s16le data.
     /// Port of `_build_wav()` in stt.
-    static func buildWAV(pcmData: Data, sampleRate: Int32 = 16000) -> Data {
+    nonisolated static func buildWAV(pcmData: Data, sampleRate: Int32 = 16000) -> Data {
         let dataLen = UInt32(pcmData.count)
         let byteRate = UInt32(sampleRate) * 2  // 1 channel × 2 bytes
         var wav = Data()

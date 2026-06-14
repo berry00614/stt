@@ -55,7 +55,7 @@ final class AppSettings {
     /// Resolves the whisper.cpp project root.
     /// Looks relative to the app bundle for development builds,
     /// or at common installation paths.
-    static func whisperCppRoot() -> URL? {
+    nonisolated static func whisperCppRoot() -> URL? {
         // 1. Check environment variable (for development)
         if let envPath = ProcessInfo.processInfo.environment["WHISPER_CPP_ROOT"] {
             let url = URL(fileURLWithPath: envPath)
@@ -88,21 +88,21 @@ final class AppSettings {
     }
 
     /// Resolves the whisper-cli binary path.
-    static func whisperCliPath() -> URL? {
+    nonisolated static func whisperCliPath() -> URL? {
         guard let root = whisperCppRoot() else { return nil }
         let path = root.appendingPathComponent("build/bin/whisper-cli")
         return FileManager.default.fileExists(atPath: path.path) ? path : nil
     }
 
     /// Resolves the whisper-server binary path.
-    static func whisperServerPath() -> URL? {
+    nonisolated static func whisperServerPath() -> URL? {
         guard let root = whisperCppRoot() else { return nil }
         let path = root.appendingPathComponent("build/bin/whisper-server")
         return FileManager.default.fileExists(atPath: path.path) ? path : nil
     }
 
     /// Resolves the models directory.
-    static func modelsDirectory() -> URL? {
+    nonisolated static func modelsDirectory() -> URL? {
         guard let root = whisperCppRoot() else { return nil }
         let path = root.appendingPathComponent("models")
         return FileManager.default.fileExists(atPath: path.path) ? path : nil

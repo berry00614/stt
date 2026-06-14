@@ -105,10 +105,17 @@ struct MenuBarView: View {
                 }
             }
 
+            Button(action: { openWindow(id: "main") }) {
+                Label("Show Main Window", systemImage: "macwindow")
+            }
+            .keyboardShortcut("0", modifiers: .command)
+
             Divider()
 
-            Button(action: { openWindow(id: "settings") }) {
-                Label("Preferences...", systemImage: "gearshape")
+            Button(action: {
+                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            }) {
+                Label("Settings...", systemImage: "gearshape")
             }
             .keyboardShortcut(",", modifiers: .command)
         }

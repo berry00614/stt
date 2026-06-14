@@ -7,9 +7,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     let transcriptionService = TranscriptionService()
     let captionWindowController = CaptionWindowController()
     let hudController = HUDPanelController()
+    let fileTranscriptionService = FileTranscriptionService()
 
     /// Tracks whether the Settings window is currently open.
     @Published var isSettingsOpen = false
+    /// Tracks whether the main window is currently open.
+    @Published var isMainWindowOpen = false
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -36,13 +39,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     ///   - `.accessory` when only the menu bar is visible (no Dock icon)
     ///   - `.regular`   when any window is open (shows in Dock)
     private func observeWindows() {
-        Publishers.CombineLatest3(
+        Publishers.MergeMany(
             captionWindowController.$isOpen,
             hudController.$isOpen,
-            $isSettingsOpen
+            $isSettingsOpen,
+            $isMainWindowOpen
         )
         .receive(on: RunLoop.main)
-        .sink { [weak self] _, _, _ in
+        .sink { [weak self] _ in
             self?.updateActivationPolicy()
         }
         .store(in: &cancellables)
@@ -57,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         let hasVisibleWindow = captionWindowController.isOpen
                             || hudController.isOpen
                             || isSettingsOpen
+                            || isMainWindowOpen
 
         if hasVisibleWindow {
             NSApp.setActivationPolicy(.regular)
@@ -135,8 +140,22 @@ struct stt_appApp: App {
         }
         .menuBarExtraStyle(.menu)
 
-        // Settings window (opened from menu bar)
-        Window("Preferences", id: "settings") {
+        // Main window — the primary interface
+        Window("stt", id: "main") {
+            MainWindowView(
+                dictationService: appDelegate.dictationService,
+                transcriptionService: appDelegate.transcriptionService,
+                captionWindowController: appDelegate.captionWindowController,
+                fileTranscriptionService: appDelegate.fileTranscriptionService
+            )
+            .onAppear { appDelegate.isMainWindowOpen = true }
+            .onDisappear { appDelegate.isMainWindowOpen = false }
+        }
+        .windowResizability(.contentSize)
+        .defaultSize(width: 560, height: 520)
+
+        // Settings scene — automatically adds Settings… (⌘,) to the app menu
+        Settings {
             SettingsView()
                 .onAppear { appDelegate.isSettingsOpen = true }
                 .onDisappear { appDelegate.isSettingsOpen = false }
