@@ -42,7 +42,8 @@ final class WhisperServerManager: ObservableObject {
     // MARK: - Lifecycle
 
     /// Start whisper-server. No-op if already running.
-    func start() async {
+    /// - Parameter modelOverride: if non-nil, use this model name instead of AppSettings.shared.modelName
+    func start(modelOverride: String? = nil) async {
         guard case .stopped = serverState else { return }
         stderrBuffer = ""
 
@@ -53,8 +54,9 @@ final class WhisperServerManager: ObservableObject {
             lastError = msg
             return
         }
-        guard let modelPath = AppSettings.shared.resolvedModelPath() else {
-            let msg = "Model not found: \(AppSettings.shared.modelName)"
+        let modelName = modelOverride ?? AppSettings.shared.modelName
+        guard let modelPath = AppSettings.shared.resolvedModelPath(name: modelName) else {
+            let msg = "Model not found: \(modelName)"
             print("[WhisperServer] \(msg)")
             serverState = .error(msg)
             lastError = msg

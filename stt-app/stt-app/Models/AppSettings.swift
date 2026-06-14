@@ -11,6 +11,9 @@ final class AppSettings {
     @AppStorage("model_name")
     var modelName: String = "ggml-small.bin"
 
+    @AppStorage("stream_model_name")
+    var streamModelName: String = "ggml-tiny.en.bin"
+
     @AppStorage("language")
     var language: String = "auto"
 
@@ -106,9 +109,9 @@ final class AppSettings {
     }
 
     /// Returns the path to the currently selected model.
-    func resolvedModelPath() -> URL? {
+    func resolvedModelPath(name: String? = nil) -> URL? {
         guard let modelsDir = Self.modelsDirectory() else { return nil }
-        let path = modelsDir.appendingPathComponent(modelName)
+        let path = modelsDir.appendingPathComponent(name ?? modelName)
         return FileManager.default.fileExists(atPath: path.path) ? path : nil
     }
 

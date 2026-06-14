@@ -9,7 +9,7 @@ enum PasteController {
     /// 2. Places text on clipboard
     /// 3. Simulates Cmd+V keypress
     /// 4. Restores original clipboard contents
-    static func pasteAtCursor(_ text: String) {
+    static func pasteAtCursor(_ text: String) async {
         guard !text.isEmpty else { return }
 
         // Check accessibility permission
@@ -27,18 +27,17 @@ enum PasteController {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
-        // Small delay for clipboard to settle
-        Thread.sleep(forTimeInterval: 0.01)
+        // Brief yield for clipboard to settle
+        try? await Task.sleep(nanoseconds: 10_000_000)  // 10ms
 
         // Simulate Cmd+V
         simulateCmdV()
 
-        // Restore old clipboard after a brief delay (let paste complete)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            if let old = oldContents {
-                pasteboard.clearContents()
-                pasteboard.setString(old, forType: .string)
-            }
+        // Restore old clipboard after paste completes
+        try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms
+        if let old = oldContents {
+            pasteboard.clearContents()
+            pasteboard.setString(old, forType: .string)
         }
     }
 
@@ -63,10 +62,8 @@ enum PasteController {
             keyDown.post(tap: .cghidEventTap)
         }
 
-        // Small delay between down and up
-        Thread.sleep(forTimeInterval: 0.01)
-
-        // Key-up
+        // Key-up (CGEvent posts are processed synchronously; the brief
+        // interval between down and up is implicit in the event loop)
         if let keyUp = CGEvent(
             keyboardEventSource: source,
             virtualKey: 0x09,

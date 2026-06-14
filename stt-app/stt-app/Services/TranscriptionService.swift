@@ -2,10 +2,10 @@ import Foundation
 import Combine
 import SwiftUI
 
-/// Coordinates real-time streaming transcription:
-///   Audio capture → ring buffer → POST whisper-server → filtered text output
+/// Coordinates real-time streaming transcription with incremental send:
+///   Audio capture → sliding window → POST whisper-server → diff-based text output
 ///
-/// Implements the same three-layer anti-hallucination strategy as the Python CLI:
+/// Anti-hallucination (ported from Python CLI):
 ///   1. Energy gate (RMS threshold + sustained speech detection)
 ///   2. whisper no-speech-thold (server-side)
 ///   3. Hallucination text filter (post-processing)
@@ -29,29 +29,39 @@ final class TranscriptionService: ObservableObject {
     let audioCapture = AudioCaptureService()
     private var cancellables = Set<AnyCancellable>()
     private var streamTimer: Timer?
-    private var lastText: String = ""
+
+    // MARK: - Incremental state
+
+    private var lastSentOffset: Int = 0          // byte offset in accumulatedData
+    private var lastFullText: String = ""         // full text from last server response
+    private var transcriptSegments: [String] = [] // incremental text segments
+    private let maxDisplaySegments = 8            // rolling window for display
+
+    // Energy gate
     private var silenceStreak: Int = 0
     private var allowPrint: Bool = false
-    private let bytesPerSec: Int = 16000 * 2  // 16kHz × 16-bit mono
-
-    // Energy gate parameters (matching Python CLI)
-    private let speechWindow: TimeInterval = 1.5
     private let hangoverIntervals: Int = 3
+
+    // Audio constants
+    private let bytesPerSec: Int = 16000 * 2       // 16kHz × 16-bit mono
+    private let chunkWindowSec: Int = 5             // send last 5s for context
+    private let minChunkBytes: Int = 1600           // 0.05s minimum
 
     // MARK: - Lifecycle
 
-    /// Start the streaming transcription pipeline.
     func start() async {
         guard !isRunning else { return }
         isRunning = true
         displayText = ""
-        lastText = ""
+        lastFullText = ""
+        lastSentOffset = 0
+        transcriptSegments = []
         silenceStreak = 0
         allowPrint = false
 
-        // 1. Start whisper-server
-        print("[Transcription] Starting whisper-server...")
-        await serverManager.start()
+        // 1. Start whisper-server with stream-optimized model
+        print("[Transcription] Starting whisper-server (stream model: \(AppSettings.shared.streamModelName))...")
+        await serverManager.start(modelOverride: AppSettings.shared.streamModelName)
 
         guard serverManager.isReady else {
             print("[Transcription] Server failed to start. State: \(serverManager.serverState)")
@@ -81,7 +91,7 @@ final class TranscriptionService: ObservableObject {
 
         // 4. Start periodic send timer
         let interval = streamInterval
-        print("[Transcription] Starting send timer (interval: \(interval)s)")
+        print("[Transcription] Sending timer started (interval: \(interval)s, window: \(chunkWindowSec)s)")
 
         let timer = Timer(
             timeInterval: interval,
@@ -97,7 +107,6 @@ final class TranscriptionService: ObservableObject {
         print("[Transcription] Pipeline started — streaming active")
     }
 
-    /// Stop the streaming transcription pipeline.
     func stop() {
         print("[Transcription] Stopping pipeline...")
         isRunning = false
@@ -106,76 +115,113 @@ final class TranscriptionService: ObservableObject {
         audioCapture.stop()
         serverManager.stop()
         displayText = ""
+        lastFullText = ""
+        transcriptSegments = []
+        lastSentOffset = 0
         print("[Transcription] Pipeline stopped")
     }
 
-    // MARK: - Chunk Processing
+    // MARK: - Chunk Processing (incremental)
 
     private var chunkCount = 0
 
     private func sendChunk() async {
         guard isRunning, serverManager.isReady, audioCapture.state == .recording else { return }
 
-        let ringData = audioCapture.accumulatedData
+        let totalData = audioCapture.accumulatedData
+        let totalBytes = totalData.count
 
-        // Cap at 60s to bound memory
-        let maxBytes = 60 * bytesPerSec
-        var capped = ringData
-        if capped.count > maxBytes {
-            capped = capped.subdata(in: (capped.count - 30 * bytesPerSec)..<capped.count)
+        // Guard: not enough audio yet
+        guard totalBytes >= minChunkBytes else { return }
+
+        // --- 增量发送：只取上次以来新增的音频 ---
+        let newData: Data
+        if lastSentOffset > 0 && lastSentOffset < totalBytes {
+            newData = totalData.subdata(in: lastSentOffset..<totalBytes)
+        } else {
+            // First chunk or reset: send the window
+            let start = max(0, totalBytes - chunkWindowSec * bytesPerSec)
+            newData = totalData.subdata(in: start..<totalBytes)
         }
 
-        guard capped.count >= bytesPerSec / 2 else {
-            // Not enough audio yet
-            return
-        }
+        guard newData.count >= minChunkBytes else { return }
+        lastSentOffset = totalBytes
 
-        // Energy gate: check only recent audio
-        let recentLen = min(capped.count, Int(Double(bytesPerSec) * speechWindow))
-        let recent = capped.subdata(in: (capped.count - recentLen)..<capped.count)
-        let hasSpeech = AntiHallucination.hasSpeech(recent, threshold: silenceThreshold)
+        // --- 滑动窗口：取最近 N 秒（含上下文）+ 新数据用于转写 ---
+        let windowStart = max(0, totalBytes - chunkWindowSec * bytesPerSec)
+        let windowData = totalData.subdata(in: windowStart..<totalBytes)
 
+        // --- Energy gate ---
+        let hasSpeech = AntiHallucination.hasSpeech(windowData, threshold: silenceThreshold)
         if hasSpeech {
             silenceStreak = 0
             allowPrint = true
         } else {
             silenceStreak += 1
-            if silenceStreak == 1 {
-                allowPrint = true
-            } else {
-                allowPrint = false
-            }
+            allowPrint = (silenceStreak <= 1)
             if silenceStreak > hangoverIntervals {
-                // Extended silence — skip this chunk entirely
-                return
+                return  // extended silence — skip entirely
             }
         }
 
-        // Build WAV and send to server
-        let wav = AntiHallucination.buildWAV(pcmData: capped)
+        // --- Send to server ---
+        let wav = AntiHallucination.buildWAV(pcmData: windowData)
         chunkCount += 1
-        let text = await serverManager.transcribe(
-            wavData: wav,
-            filename: "chunk_\(chunkCount).wav"
-        )
+        let text = try? await retryTranscribe(wavData: wav, filename: "chunk_\(chunkCount).wav", maxRetries: 2)
 
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Log every 10th chunk for diagnostics
         if chunkCount % 10 == 0 {
-            print("[Transcription] Chunk #\(chunkCount): buffer=\(capped.count/bytesPerSec)s, speech=\(hasSpeech), silenceStreak=\(silenceStreak), text=\(trimmed.prefix(50))")
+            print("[Transcription] Chunk #\(chunkCount): window=\(windowData.count/bytesPerSec)s, "
+                  + "new=\(newData.count/bytesPerSec)s, speech=\(hasSpeech), "
+                  + "silenceStreak=\(silenceStreak), text=\(trimmed.prefix(50))")
         }
 
-        // Filter
-        if !trimmed.isEmpty,
-           !AntiHallucination.isHallucination(trimmed),
-           trimmed != lastText,
-           allowPrint {
+        // --- Filter ---
+        guard !trimmed.isEmpty,
+              !AntiHallucination.isHallucination(trimmed),
+              allowPrint else { return }
 
-            displayText = trimmed
-            currentStreamTime = Double(capped.count) / Double(bytesPerSec)
-            print("[Transcription] → Display: \"\(trimmed.prefix(80))\"")
-            lastText = trimmed
+        // --- 增量文本累积：diff between current and previous full text ---
+        if trimmed.hasPrefix(lastFullText) && trimmed.count > lastFullText.count {
+            // New content appended
+            let delta = String(trimmed.dropFirst(lastFullText.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !delta.isEmpty {
+                let normalized = TextNormalizer.normalize(delta, language: AppSettings.shared.language)
+                transcriptSegments.append(normalized)
+                print("[Transcription] Δ: \"\(normalized.prefix(60))\"")
+            }
+        } else if trimmed != lastFullText {
+            // Text changed significantly (new utterance), start fresh
+            if !trimmed.isEmpty {
+                let normalized = TextNormalizer.normalize(trimmed, language: AppSettings.shared.language)
+                transcriptSegments = [normalized]
+                print("[Transcription] New utterance: \"\(normalized.prefix(60))\"")
+            }
         }
+        lastFullText = trimmed
+
+        // --- 滚动窗口显示 ---
+        let windowSize = min(maxDisplaySegments, transcriptSegments.count)
+        let recent = transcriptSegments.suffix(windowSize)
+        displayText = recent.joined(separator: " ")
+
+        currentStreamTime = Double(totalBytes) / Double(bytesPerSec)
+    }
+
+    // MARK: - Retry
+
+    private func retryTranscribe(wavData: Data, filename: String, maxRetries: Int) async -> String? {
+        for attempt in 0..<maxRetries {
+            let result = await serverManager.transcribe(wavData: wavData, filename: filename)
+            if !result.isEmpty { return result }
+            if attempt < maxRetries - 1 {
+                print("[Transcription] Retry \(attempt + 1)/\(maxRetries)...")
+                try? await Task.sleep(nanoseconds: 200_000_000)  // 200ms
+            }
+        }
+        // Last attempt
+        return await serverManager.transcribe(wavData: wavData, filename: filename)
     }
 }

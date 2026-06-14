@@ -1,8 +1,9 @@
 import Foundation
 import Combine
+import AudioToolbox
 
 /// Orchestrates the push-to-talk dictation workflow:
-///   Hotkey hold → record → whisper-cli → paste result
+///   Hotkey hold → record → whisper-cli → normalize → paste result
 @MainActor
 final class DictationService: ObservableObject {
 
@@ -74,6 +75,9 @@ final class DictationService: ObservableObject {
             state = .recording
             recordingDuration = 0
 
+            // Audio feedback
+            AudioServicesPlaySystemSound(1113)  // System "begin record" chime
+
             // Update duration display
             durationTimer = Timer.scheduledTimer(
                 withTimeInterval: 0.1,
@@ -109,18 +113,25 @@ final class DictationService: ObservableObject {
 
         do {
             let text = try await transcribe(pcmData: audioData)
-            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
                 state = .idle
                 return
             }
 
+            // Normalize (rule-based error correction)
+            let normalized = TextNormalizer.normalize(trimmed, language: AppSettings.shared.language)
+
+            // Audio feedback
+            AudioServicesPlaySystemSound(1114)  // System "complete" chime
+
             if AppSettings.shared.dictationAutoPaste {
-                PasteController.pasteAtCursor(text)
+                await PasteController.pasteAtCursor(normalized)
             } else {
-                PasteController.copyToClipboard(text)
+                PasteController.copyToClipboard(normalized)
             }
 
-            state = .done(text)
+            state = .done(normalized)
 
             // Auto-reset to idle after showing result
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
