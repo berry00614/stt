@@ -16,6 +16,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
 
+    /// Closure that opens the main SwiftUI window — set by STTForMacApp.body.
+    var openMainWindow: (() -> Void)?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Start HUD observation
         hudController.observe(dictationService: dictationService)
@@ -25,6 +28,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         // Observe window state to toggle Dock visibility
         observeWindows()
+
+        // Show main window automatically on launch
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.openMainWindow?()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -58,8 +66,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private func updateActivationPolicy() {
         let hadVisibleWindow = NSApp.activationPolicy() == .regular
 
+        // HUD is intentionally excluded — it's a non-activating overlay that must
+        // never steal focus from the app the user is dictating into.
         let hasVisibleWindow = captionWindowController.isOpen
-                            || hudController.isOpen
                             || isSettingsOpen
                             || isMainWindowOpen
 
@@ -92,10 +101,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                     let alert = NSAlert()
                     alert.messageText = "Accessibility Access Required"
                     alert.informativeText = """
-                        stt-app needs Accessibility access to detect the Right Option key and paste text.
+                        STT for Mac needs Accessibility access to detect the Right Option key and paste text.
 
                         Go to System Settings > Privacy & Security > Accessibility,
-                        then enable stt-app. You may need to relaunch the app.
+                        then enable STT for Mac. You may need to relaunch the app.
 
                         (No other permissions are needed — no Input Monitoring, no special entitlements.)
                         """
@@ -118,8 +127,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 // MARK: - App
 
 @main
-struct stt_appApp: App {
+struct STTForMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
         // Menu bar extra (always visible)
@@ -137,11 +147,16 @@ struct stt_appApp: App {
             Image(systemName: isActive ? "mic.fill" : "mic")
                 .symbolRenderingMode(isActive ? .hierarchical : .monochrome)
                 .foregroundStyle(isActive ? .red : .primary)
+                // Bridge openWindow to AppDelegate at launch so the main
+                // window can be auto-opened in applicationDidFinishLaunching.
+                .task {
+                    appDelegate.openMainWindow = { openWindow(id: "main") }
+                }
         }
         .menuBarExtraStyle(.menu)
 
         // Main window — the primary interface
-        Window("stt", id: "main") {
+        Window("STT for Mac", id: "main") {
             MainWindowView(
                 dictationService: appDelegate.dictationService,
                 transcriptionService: appDelegate.transcriptionService,

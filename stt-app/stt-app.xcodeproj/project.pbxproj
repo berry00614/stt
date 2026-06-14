@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		3D9BBDB12FDD8D550001D38A /* stt-app.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "stt-app.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		3D9BBDB12FDD8D550001D38A /* STT for Mac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "STT for Mac.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -40,7 +40,7 @@
 		3D9BBDB22FDD8D550001D38A /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				3D9BBDB12FDD8D550001D38A /* stt-app.app */,
+				3D9BBDB12FDD8D550001D38A /* STT for Mac.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -48,9 +48,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		3D9BBDB02FDD8D550001D38A /* stt-app */ = {
+		3D9BBDB02FDD8D550001D38A /* STT for Mac */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 3D9BBDBC2FDD8D560001D38A /* Build configuration list for PBXNativeTarget "stt-app" */;
+			buildConfigurationList = 3D9BBDBC2FDD8D560001D38A /* Build configuration list for PBXNativeTarget "STT for Mac" */;
 			buildPhases = (
 				3D9BBDAD2FDD8D550001D38A /* Sources */,
 				3D9BBDAE2FDD8D550001D38A /* Frameworks */,
@@ -63,11 +63,11 @@
 			fileSystemSynchronizedGroups = (
 				3D9BBDB32FDD8D550001D38A /* stt-app */,
 			);
-			name = "stt-app";
+			name = "STT for Mac";
 			packageProductDependencies = (
 			);
-			productName = "stt-app";
-			productReference = 3D9BBDB12FDD8D550001D38A /* stt-app.app */;
+			productName = "STT for Mac";
+			productReference = 3D9BBDB12FDD8D550001D38A /* STT for Mac.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -85,7 +85,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 3D9BBDAC2FDD8D550001D38A /* Build configuration list for PBXProject "stt-app" */;
+			buildConfigurationList = 3D9BBDAC2FDD8D550001D38A /* Build configuration list for PBXProject "STT for Mac" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -99,7 +99,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				3D9BBDB02FDD8D550001D38A /* stt-app */,
+				3D9BBDB02FDD8D550001D38A /* STT for Mac */,
 			);
 		};
 /* End PBXProject section */
@@ -267,17 +267,17 @@
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = stt;
+				INFOPLIST_KEY_CFBundleDisplayName = "STT for Mac";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "stt-app needs microphone access to transcribe your speech.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "STT for Mac needs microphone access to transcribe your speech.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.6;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "cn.hungryhenry.stt-app";
+				PRODUCT_BUNDLE_IDENTIFIER = "cn.hungryhenry.sttformac";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;
@@ -317,17 +317,17 @@
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = stt;
+				INFOPLIST_KEY_CFBundleDisplayName = "STT for Mac";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "stt-app needs microphone access to transcribe your speech.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "STT for Mac needs microphone access to transcribe your speech.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.6;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "cn.hungryhenry.stt-app";
+				PRODUCT_BUNDLE_IDENTIFIER = "cn.hungryhenry.sttformac";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;
@@ -348,7 +348,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		3D9BBDAC2FDD8D550001D38A /* Build configuration list for PBXProject "stt-app" */ = {
+		3D9BBDAC2FDD8D550001D38A /* Build configuration list for PBXProject "STT for Mac" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				3D9BBDBA2FDD8D560001D38A /* Debug */,
@@ -357,7 +357,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		3D9BBDBC2FDD8D560001D38A /* Build configuration list for PBXNativeTarget "stt-app" */ = {
+		3D9BBDBC2FDD8D560001D38A /* Build configuration list for PBXNativeTarget "STT for Mac" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				3D9BBDBD2FDD8D560001D38A /* Debug */,

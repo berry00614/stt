@@ -19,8 +19,12 @@ final class AppSettings {
 
     // MARK: - Dictation
 
+    /// "hold" = hold Right Option to dictate; "click" = press once to start, press again to stop.
+    @AppStorage("dictation_mode")
+    var dictationMode: String = "hold"
+
     @AppStorage("dictation_hold_threshold")
-    var dictationHoldThreshold: Double = 0.3
+    var dictationHoldThreshold: Double = 0.1
 
     @AppStorage("dictation_auto_paste")
     var dictationAutoPaste: Bool = true

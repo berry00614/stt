@@ -40,7 +40,7 @@ struct MainWindowView: View {
 
     private var titleBar: some View {
         HStack {
-            Text("stt")
+            Text("STT for Mac")
                 .font(.system(size: 16, weight: .bold))
                 .foregroundColor(.primary)
             Text("— Local Speech-to-Text")
@@ -49,9 +49,7 @@ struct MainWindowView: View {
 
             Spacer()
 
-            Button(action: {
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-            }) {
+            SettingsLink {
                 Image(systemName: "gearshape")
                     .font(.system(size: 14))
             }
@@ -66,7 +64,9 @@ struct MainWindowView: View {
 
     private var bottomBar: some View {
         HStack {
-            Text("Hold ⌥ (Right Option) to dictate from anywhere")
+            Text(AppSettings.shared.dictationMode == "click"
+                 ? "Press ⌥ (Right Option) to toggle dictation from anywhere"
+                 : "Hold ⌥ (Right Option) to dictate from anywhere")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
 
@@ -184,7 +184,9 @@ struct MainWindowView: View {
 
     private var dictationSubtitle: String {
         switch dictationService.state {
-        case .idle: return "Click to record, or hold Right Option"
+        case .idle: return AppSettings.shared.dictationMode == "click"
+            ? "Click to record, or press Right Option"
+            : "Click to record, or hold Right Option"
         case .recording: return "Recording in progress…"
         case .transcribing: return "Processing audio…"
         case .done: return "Transcription complete"

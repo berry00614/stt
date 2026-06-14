@@ -56,7 +56,7 @@ struct MenuBarView: View {
             .padding(.horizontal, 12)
 
             // Hotkey reminder
-            Text("Hold ⌥ (Right Option) to dictate")
+            Text(hotkeyHint)
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
                 .padding(.horizontal, 12)
@@ -112,9 +112,7 @@ struct MenuBarView: View {
 
             Divider()
 
-            Button(action: {
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-            }) {
+            SettingsLink {
                 Label("Settings...", systemImage: "gearshape")
             }
             .keyboardShortcut(",", modifiers: .command)
@@ -124,7 +122,7 @@ struct MenuBarView: View {
     private var footerSection: some View {
         Group {
             Button(action: quit) {
-                Label("Quit stt-app", systemImage: "power")
+                Label("Quit STT for Mac", systemImage: "power")
             }
             .keyboardShortcut("q", modifiers: .command)
         }
@@ -168,6 +166,12 @@ struct MenuBarView: View {
         case .ready: return transcriptionService.isRunning ? "Active" : "Ready"
         case .error: return "Error"
         }
+    }
+
+    private var hotkeyHint: String {
+        AppSettings.shared.dictationMode == "click"
+            ? "Press ⌥ (Right Option) to toggle dictation"
+            : "Hold ⌥ (Right Option) to dictate"
     }
 
     private var serverErrorMessage: String? {

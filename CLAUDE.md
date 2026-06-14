@@ -1,4 +1,4 @@
-# stt — Local Speech-to-Text for macOS
+# STT for Mac — Local Speech-to-Text for macOS
 
 基于 whisper.cpp 的本地语音转写工具，包含 Python CLI 和原生 macOS 菜单栏应用。完全离线，Apple Silicon 原生加速。
 
@@ -53,20 +53,20 @@ stt/
   - `record/file`：`ffmpeg 录音 → .wav → whisper-cli 转写 → stdout`
   - `stream`：`ffmpeg segment → chunk_N.wav → POST whisper-server:/inference → 实时输出`
 
-### macOS App 层
+### App
 
-- **App**：`stt-app`（SwiftUI MenuBarExtra + AppKit NSPanel）
+- `STT for Mac` (macOS app, Xcode project at `stt-app/stt-app.xcodeproj`)
 - **引擎**：复用同一个 `whisper-server` 子进程（`Process()` 启动管理）
 - **音频采集**：`AVAudioEngine` 直接采集 float32 PCM
-- **热键**：Carbon `RegisterEventHotKey` 监听右 Option 键
+- **热键**：`NSEvent.addGlobalMonitorForEvents(.flagsChanged)` 监听右 Option 键，支持 hold/click 两种模式
 - **粘贴**：`CGEventPost` 模拟 Cmd+V
 - **数据流**：
-  - `按住右 Option` 或 `主窗口点击录音按钮` → `AVAudioEngine 录音` → `whisper-cli 批处理` → `AntiHallucination + TextNormalizer` → `CGEventPost 粘贴`
+  - `按住右 Option 或按一下右 Option（由 dictationMode 决定）或 主窗口点击录音按钮` → `AVAudioEngine 录音` → `whisper-cli 批处理` → `AntiHallucination + TextNormalizer` → `CGEventPost 粘贴`
   - `Start Captions` → `whisper-server 持续运行` → `TranscriptionService` → `CaptionOverlayView 浮动字幕`
   - `Transcribe File` → `选择文件` → `AVFoundation 转 WAV` → `whisper-cli` → `结果展示`
 - **窗口管理**：
   - 菜单栏图标始终可见（`MenuBarExtra`）
-  - **主窗口**：`Window("stt", id: "main")` — 三个功能区（听写、实时字幕、文件转写），每个区有独立模型选择器
+  - **主窗口**：`Window("STT for Mac", id: "main")` — 三个功能区（听写、实时字幕、文件转写），每个区有独立模型选择器
   - 字幕窗口：`NSPanel`，`level = .screenSaver`，`nonactivatingPanel`，全屏置顶
   - HUD 面板：`NSPanel`，录音/转写状态自动显示/隐藏
   - **Settings 场景**：`Settings { SettingsView() }` — 自动添加 Preferences…（⌘,）到系统菜单，独立于主窗口
@@ -118,19 +118,19 @@ stt/
 ### macOS App
 
 - `stt_appApp.swift`：入口点，AppDelegate 管理生命周期、热键、Dock 可见性、权限提示
-- `DictationService`：一键通状态机（idle → recording → transcribing → done/error → idle）。`startRecording()` 和 `stopAndTranscribe()` 为非 private，支持主窗口 UI 按钮调用
+- `DictationService`：一键通状态机（idle → recording → transcribing → done/error → idle）。`startRecording()` 和 `stopAndTranscribe()` 为非 private，支持主窗口 UI 按钮调用。支持 hold（按住录/松开关）和 click（按一下开/按一下关）两种模式，由 `AppSettings.dictationMode` 控制
 - `FileTranscriptionService`：文件转写，`selectFile()` 调用 NSOpenPanel，`transcribe()` 用 `Task.detached` + `nonisolated` 静态方法在后台完成 AVFoundation 音频转换（→ 16kHz mono WAV）和 whisper-cli 调用
 - `TranscriptionService`：实时字幕协调，管理 whisper-server 启停
 - `WhisperServerManager`：`Process()` 管理 whisper-server 子进程生命周期，监控健康状态
 - `AntiHallucination`：三层过滤 — 能量门控、no-speech-thold 0.5、模式匹配过滤（音效描述、非 CJK 垃圾、替换字符）。`buildWAV` 为 nonisolated
 - `TextNormalizer`：ICU `Hant-Hans` 繁→简转换 + 标点规范化
 - `AppSettings`：`@AppStorage` 持久化配置。静态路径解析方法（`whisperCppRoot`、`whisperCliPath`、`modelsDirectory` 等）均为 nonisolated，可从后台任务安全调用
-- `HotkeyMonitor`：Carbon `RegisterEventHotKey` 监听右 Option 键（kVK_RightOption）
+- `HotkeyMonitor`：`NSEvent.addGlobalMonitorForEvents(.flagsChanged)` 监听右 Option 键，支持 hold（按住阈值后触发）和 click（按一下切换）两种模式
 - `PasteController`：先尝试 `NSPasteboard` + `CGEventPost Cmd+V`，失败则写剪贴板
 - `MainWindowView`：主窗口内容，三个 `CardView`（听写/字幕/文件转写），每个卡片有独立模型 `Picker`（听写用 `modelName`，字幕用 `streamModelName`）
 - **窗口层级**：CaptionWindowController 和 HUDPanelController 都使用 `NSPanel`（`nonactivatingPanel`、`level: .screenSaver`），不会抢焦点
-- **Dock 可见性**：`AppDelegate.observeWindows()` 用 `MergeMany`（4 个 publisher）监听 `captionWindowController.isOpen`、`hudController.isOpen`、`isSettingsOpen`、`isMainWindowOpen`，动态切换 `NSApp.setActivationPolicy(.regular)` / `(.accessory)`
-- **Settings 场景**：`Settings { SettingsView() }`，Preferences…（⌘,）自动出现在系统菜单栏（stt → Preferences…），不同于主窗口
-- **配置**：`AppSettings` 通过 `@AppStorage` 持久化到 UserDefaults（模型名、语言、stream 参数等）
+- **Dock 可见性**：`AppDelegate.observeWindows()` 用 `MergeMany`（4 个 publisher）监听 `captionWindowController.isOpen`、`hudController.isOpen`、`isSettingsOpen`、`isMainWindowOpen`，但 HUD 被排除在激活策略切换之外（它是 `nonactivatingPanel`，不能抢焦点）。仅当主窗口、字幕窗口或设置窗口打开时才切换到 `.regular`，否则 `.accessory`
+- **Settings 场景**：`Settings { SettingsView() }`，Preferences…（⌘,）自动出现在系统菜单栏（STT for Mac → Preferences…），独立于主窗口。通过 SwiftUI `SettingsLink` 打开（而非 `NSApp.sendAction`）
+- **配置**：`AppSettings` 通过 `@AppStorage` 持久化到 UserDefaults（模型名、语言、dictationMode/holdThreshold/autoPaste、stream 参数等）
 - 应用使用自动签名 + Hardened Runtime，无 App Sandbox（需要 `Process()` 和 `CGEventPost`）
 - 最低部署目标 macOS 14.6

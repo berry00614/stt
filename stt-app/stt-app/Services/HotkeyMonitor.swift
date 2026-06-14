@@ -116,21 +116,17 @@ final class HotkeyMonitor: ObservableObject {
 
     // MARK: - Key State Machine
 
+    private var dictationMode: String { AppSettings.shared.dictationMode }
+
     private func handleKeyDown() {
         guard !isKeyDown else { return }
         isKeyDown = true
         keyDownTime = Date()
-        monitorState = .waiting
 
-        print("[HotkeyMonitor] Right Option DOWN (waiting \(holdThreshold)s for hold)")
-
-        holdTimer = Timer.scheduledTimer(
-            withTimeInterval: holdThreshold,
-            repeats: false
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.triggerRecording()
-            }
+        if dictationMode == "click" {
+            handleClickModeKeyDown()
+        } else {
+            handleHoldModeKeyDown()
         }
     }
 
@@ -143,6 +139,13 @@ final class HotkeyMonitor: ObservableObject {
         holdTimer?.invalidate()
         holdTimer = nil
 
+        if dictationMode == "click" {
+            // In click mode, key-up does nothing — recording is toggled on key-down
+            keyDownTime = nil
+            return
+        }
+
+        // Hold mode: key-up stops recording
         switch monitorState {
         case .waiting:
             monitorState = .idle
@@ -161,10 +164,56 @@ final class HotkeyMonitor: ObservableObject {
         keyDownTime = nil
     }
 
+    // MARK: - Hold Mode
+
+    private func handleHoldModeKeyDown() {
+        let threshold = holdThreshold
+        monitorState = .waiting
+
+        if threshold <= 0 {
+            // Disabled — start recording immediately
+            triggerRecording()
+        } else {
+            print("[HotkeyMonitor] Right Option DOWN (waiting \(threshold)s for hold)")
+            holdTimer = Timer.scheduledTimer(
+                withTimeInterval: threshold,
+                repeats: false
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.triggerRecording()
+                }
+            }
+        }
+    }
+
+    // MARK: - Click Mode
+
+    private func handleClickModeKeyDown() {
+        switch monitorState {
+        case .idle:
+            // Start recording immediately (bypass triggerRecording's waiting guard)
+            print("[HotkeyMonitor] Right Option DOWN — click mode, starting recording")
+            monitorState = .recording
+            onTriggerRecording.send()
+
+        case .waiting, .recording:
+            // Stop recording
+            print("[HotkeyMonitor] Right Option DOWN — click mode, stopping recording")
+            holdTimer?.invalidate()
+            holdTimer = nil
+            monitorState = .idle
+            onStopRecording.send()
+            keyDownTime = nil
+
+        }
+    }
+
+    // MARK: - Trigger
+
     private func triggerRecording() {
         guard isKeyDown, monitorState == .waiting else { return }
         monitorState = .recording
         onTriggerRecording.send()
-        print("[HotkeyMonitor] → Hold threshold reached, recording started")
+        print("[HotkeyMonitor] → Recording started")
     }
 }

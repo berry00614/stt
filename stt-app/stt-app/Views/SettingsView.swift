@@ -4,7 +4,8 @@ import SwiftUI
 struct SettingsView: View {
     @AppStorage("model_name") private var modelName = "ggml-small.bin"
     @AppStorage("language") private var language = "auto"
-    @AppStorage("dictation_hold_threshold") private var holdThreshold = 0.3
+    @AppStorage("dictation_mode") private var dictationMode = "hold"
+    @AppStorage("dictation_hold_threshold") private var holdThreshold = 0.1
     @AppStorage("dictation_auto_paste") private var autoPaste = true
     @AppStorage("captions_stream_interval") private var streamInterval = 0.5
     @AppStorage("captions_silence_threshold") private var silenceThreshold = 0.01
@@ -72,19 +73,32 @@ struct SettingsView: View {
     private var dictationTab: some View {
         Form {
             Section {
+                Picker("Dictation mode", selection: $dictationMode) {
+                    Text("Hold to dictate").tag("hold")
+                    Text("Click to dictate").tag("click")
+                }
+                .pickerStyle(.radioGroup)
+                Text(dictationMode == "hold"
+                     ? "Hold Right Option to record, release to transcribe"
+                     : "Press Right Option once to start, press again to stop")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Text("Hold threshold:")
                         Spacer()
-                        Text(String(format: "%.1fs", holdThreshold))
+                        Text(holdThreshold <= 0 ? "Immediate" : String(format: "%.1fs", holdThreshold))
                             .monospacedDigit()
                             .foregroundColor(.secondary)
                     }
-                    Slider(value: $holdThreshold, in: 0.1...1.0, step: 0.1)
-                    Text("How long to hold Right Option before recording starts")
+                    Slider(value: $holdThreshold, in: 0.0...1.0, step: 0.1)
+                    Text("How long to hold Right Option before recording starts (0 = immediate)")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
+                .disabled(dictationMode == "click")
+                .opacity(dictationMode == "click" ? 0.4 : 1.0)
 
                 Toggle("Auto-paste at cursor", isOn: $autoPaste)
                     .help("When off, text is only copied to clipboard")
