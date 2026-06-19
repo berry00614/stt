@@ -3,6 +3,7 @@ import SwiftUI
 import Combine
 
 /// Manages the dictation HUD panel — a small floating indicator shown during dictation.
+@MainActor
 final class HUDPanelController: ObservableObject {
     private var panel: NSPanel?
 
