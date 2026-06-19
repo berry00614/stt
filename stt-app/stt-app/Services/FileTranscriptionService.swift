@@ -187,11 +187,9 @@ final class FileTranscriptionService: ObservableObject {
         guard let cliPath = AppSettings.whisperCliPath() else {
             throw FileTranscriptionError.whisperCliNotFound
         }
-        guard let modelsDir = AppSettings.modelsDirectory() else {
-            throw FileTranscriptionError.modelNotFound(modelName)
-        }
-        let modelPath = modelsDir.appendingPathComponent(modelName)
-        guard FileManager.default.fileExists(atPath: modelPath.path) else {
+        guard let modelPath = AppSettings.modelDirectories()
+            .map({ $0.appendingPathComponent(modelName) })
+            .first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
             throw FileTranscriptionError.modelNotFound(modelName)
         }
 

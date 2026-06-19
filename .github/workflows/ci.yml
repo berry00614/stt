@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: CLI and shell checks
+        run: |
+          python3 -m py_compile stt
+          python3 -m unittest discover -s tests -v
+          bash -n setup.sh
+          bash -n stt-app/scripts/embed-whisper-runtime.sh
+
+      - name: Build whisper.cpp
+        run: |
+          cmake -S whisper.cpp -B whisper.cpp/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=14.6 \
+            -DWHISPER_COREML=ON \
+            -DWHISPER_COREML_ALLOW_FALLBACK=ON
+          cmake --build whisper.cpp/build --config Release -j 3
+
+      - name: Build macOS app
+        run: |
+          xcodebuild \
+            -project stt-app/stt-app.xcodeproj \
+            -scheme "STT for Mac" \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            build

@@ -3,8 +3,9 @@ whisper.cpp/models/*.bin
 *.tar.gz
 __pycache__/
 .DS_Store
+.build/
+*.xcresult
 
 # Xcode
 **/xcuserdata/
 **/*.xcuserstate
-stt-app/stt-app.xcodeproj/project.xcworkspace/xcuserdata/hungryhenry.xcuserdatad/UserInterfaceState.xcuserstate

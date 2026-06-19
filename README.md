@@ -23,7 +23,7 @@
 ### One-Click Setup
 
 ```bash
-git clone https://github.com/berry00614/stt.git ~/projects/stt
+git clone https://github.com/berry00614/STT-for-Mac.git ~/projects/stt
 cd ~/projects/stt
 bash setup.sh
 ```
@@ -111,11 +111,12 @@ The native macOS menu bar app provides one-click voice input with a global hotke
 
 ### Getting Started
 
-1. Open `stt-app/stt-app.xcodeproj` in Xcode and press ⌘R to build and run.
-2. The 🎤 icon appears in the menu bar.
-3. Click the menu bar icon to access quick actions, or open the main window.
-4. Choose between **Hold to dictate** (press and hold the right Option key to record, release to transcribe) or **Click to dictate** (press once to start, again to stop) in Settings.
-5. Use the main window to record, start live captions, or transcribe a file.
+1. Run `bash setup.sh` once to build whisper.cpp and download a model.
+2. Open `stt-app/stt-app.xcodeproj` in Xcode and press ⌘R to build and run.
+3. The 🎤 icon appears in the menu bar.
+4. Click the menu bar icon to access quick actions, or open the main window.
+5. Choose between **Hold to dictate** (press and hold the right Option key to record, release to transcribe) or **Click to dictate** (press once to start, again to stop) in Settings.
+6. Use the main window to record, start live captions, or transcribe a file.
 
 ### Features
 
@@ -171,7 +172,13 @@ aborts inference and clears buffered audio before a later restart.
 
 ### Building
 
-The Xcode project uses automatic signing (`CODE_SIGN_STYLE = Automatic`) — no configuration needed to build locally. Minimum deployment target: macOS 14.6.
+The Xcode project uses automatic signing (`CODE_SIGN_STYLE = Automatic`).
+Select your Apple development team in Xcode when running a signed build.
+Command-line CI builds disable signing. Minimum deployment target: macOS 14.6.
+The build embeds `whisper-cli` and the whisper/ggml dynamic libraries in the
+app bundle. Model files remain external because they are large. The app searches
+`STT_MODELS_DIR`, its bundled resources, `~/Library/Application Support/STT for Mac/models`,
+and common development checkout locations, in that order.
 
 ```bash
 # Command-line build (requires Xcode 16+)

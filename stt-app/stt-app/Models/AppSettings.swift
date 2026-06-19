@@ -60,11 +60,8 @@ final class AppSettings {
 
     // MARK: - Path Resolution
 
-    /// Resolves the whisper.cpp project root.
-    /// Looks relative to the app bundle for development builds,
-    /// or at common installation paths.
+    /// Resolves the whisper.cpp project root for development builds.
     nonisolated static func whisperCppRoot() -> URL? {
-        // 1. Check environment variable (for development)
         if let envPath = ProcessInfo.processInfo.environment["WHISPER_CPP_ROOT"] {
             let url = URL(fileURLWithPath: envPath)
             if FileManager.default.fileExists(atPath: url.path) {
@@ -72,16 +69,11 @@ final class AppSettings {
             }
         }
 
-        // 2. Look relative to the running app (development in Xcode)
-        // The app runs from DerivedData; the project is at ~/Documents/coding/stt
         let candidates = [
-            // Development: relative to source repo
             URL(fileURLWithPath: NSHomeDirectory())
                 .appendingPathComponent("Documents/coding/stt/whisper.cpp"),
-            // Home directory projects
             URL(fileURLWithPath: NSHomeDirectory())
                 .appendingPathComponent("projects/stt/whisper.cpp"),
-            // Direct home
             URL(fileURLWithPath: NSHomeDirectory())
                 .appendingPathComponent("stt/whisper.cpp"),
         ]
@@ -97,6 +89,11 @@ final class AppSettings {
 
     /// Resolves the whisper-cli binary path.
     nonisolated static func whisperCliPath() -> URL? {
+        if let bundled = Bundle.main.resourceURL?
+            .appendingPathComponent("bin/whisper-cli"),
+           FileManager.default.isExecutableFile(atPath: bundled.path) {
+            return bundled
+        }
         guard let root = whisperCppRoot() else { return nil }
         let path = root.appendingPathComponent("build/bin/whisper-cli")
         return FileManager.default.fileExists(atPath: path.path) ? path : nil
@@ -109,43 +106,83 @@ final class AppSettings {
         return FileManager.default.fileExists(atPath: path.path) ? path : nil
     }
 
-    /// Resolves the models directory.
+    /// Returns model search directories in priority order.
+    nonisolated static func modelDirectories() -> [URL] {
+        var directories: [URL] = []
+
+        if let configured = ProcessInfo.processInfo.environment["STT_MODELS_DIR"] {
+            directories.append(URL(fileURLWithPath: configured))
+        }
+
+        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("models") {
+            directories.append(bundled)
+        }
+
+        if let applicationSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first {
+            directories.append(
+                applicationSupport
+                    .appendingPathComponent("STT for Mac", isDirectory: true)
+                    .appendingPathComponent("models", isDirectory: true)
+            )
+        }
+
+        if let root = whisperCppRoot() {
+            directories.append(root.appendingPathComponent("models"))
+        }
+
+        var seen = Set<String>()
+        return directories.filter { seen.insert($0.standardizedFileURL.path).inserted }
+    }
+
+    /// Resolves the first existing models directory.
     nonisolated static func modelsDirectory() -> URL? {
-        guard let root = whisperCppRoot() else { return nil }
-        let path = root.appendingPathComponent("models")
-        return FileManager.default.fileExists(atPath: path.path) ? path : nil
+        modelDirectories().first {
+            FileManager.default.fileExists(atPath: $0.path)
+        }
     }
 
     /// Returns the path to the currently selected model.
     func resolvedModelPath(name: String? = nil) -> URL? {
-        guard let modelsDir = Self.modelsDirectory() else { return nil }
-        let path = modelsDir.appendingPathComponent(name ?? modelName)
-        return FileManager.default.fileExists(atPath: path.path) ? path : nil
+        let filename = name ?? modelName
+        return Self.modelDirectories()
+            .map { $0.appendingPathComponent(filename) }
+            .first { FileManager.default.fileExists(atPath: $0.path) }
     }
 
-    /// Resolves the VAD model path (looks for ggml-vad-*.bin in models/).
+    /// Resolves the VAD model path.
     static func whisperVadModelPath() -> URL? {
-        guard let modelsDir = modelsDirectory() else { return nil }
-        guard let contents = try? FileManager.default.contentsOfDirectory(
-            at: modelsDir,
-            includingPropertiesForKeys: nil
-        ) else { return nil }
-        return contents.first { name in
-            let fn = name.lastPathComponent
-            return fn.hasPrefix("ggml-silero") && fn.hasSuffix(".bin")
+        for modelsDir in modelDirectories() {
+            guard let contents = try? FileManager.default.contentsOfDirectory(
+                at: modelsDir,
+                includingPropertiesForKeys: nil
+            ) else { continue }
+            if let model = contents.first(where: {
+                $0.lastPathComponent.hasPrefix("ggml-silero")
+                    && $0.pathExtension == "bin"
+            }) {
+                return model
+            }
         }
+        return nil
     }
 
     /// Lists available model files in the models directory.
     static func availableModels() -> [String] {
-        guard let modelsDir = modelsDirectory() else { return [] }
-        guard let contents = try? FileManager.default.contentsOfDirectory(
-            at: modelsDir,
-            includingPropertiesForKeys: nil
-        ) else { return [] }
-        return contents
-            .filter { $0.pathExtension == "bin" }
-            .map { $0.lastPathComponent }
-            .sorted()
+        let models = modelDirectories().flatMap { modelsDir -> [String] in
+            guard let contents = try? FileManager.default.contentsOfDirectory(
+                at: modelsDir,
+                includingPropertiesForKeys: nil
+            ) else { return [] }
+            return contents
+                .filter {
+                    $0.pathExtension == "bin"
+                        && !$0.lastPathComponent.hasPrefix("ggml-silero")
+                }
+                .map(\.lastPathComponent)
+        }
+        return Array(Set(models)).sorted()
     }
 }
