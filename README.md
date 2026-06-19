@@ -38,7 +38,7 @@ brew install ffmpeg cmake
 
 # 2. Build whisper.cpp
 cd whisper.cpp
-cmake -B build -DCMAKE_BUILD_TYPE=Release -DWHISPER_COREML=ON -DWHISPER_COREML_ALLOW_FALLBACK=ON
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=14.6 -DWHISPER_COREML=ON -DWHISPER_COREML_ALLOW_FALLBACK=ON
 cmake --build build -j $(sysctl -n hw.ncpu)
 
 # 3. Download the default model (466MB)
@@ -165,6 +165,10 @@ Main Window ──── Dictation / Live Captions / File Transcription
 All transcriptions pass through AntiHallucination + TextNormalizer.
 ```
 
+Live-caption interval, context-window length, silence threshold, and thread
+count are applied when each native-engine session starts. Stopping captions
+aborts inference and clears buffered audio before a later restart.
+
 ### Building
 
 The Xcode project uses automatic signing (`CODE_SIGN_STYLE = Automatic`) — no configuration needed to build locally. Minimum deployment target: macOS 14.6.
@@ -229,7 +233,7 @@ xcodebuild -project stt-app.xcodeproj -scheme "STT for Mac" -configuration Relea
 Microphone (AVAudioEngine, 48kHz)
     │  AVAudioConverter → 16kHz mono f32
     ▼
-AudioRingBuffer (lock-free SPSC, 30s capacity)
+AudioRingBuffer (synchronized SPSC, 30s capacity)
     │
     ├── VAD (Silero neural VAD or energy-based fallback)
     │      │  whisper_vad_detect_speech_no_reset()

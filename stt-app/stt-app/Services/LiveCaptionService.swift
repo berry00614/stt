@@ -23,11 +23,18 @@ final class LiveCaptionService: ObservableObject {
     private lazy var engine: WhisperEngine = {
         WhisperEngine(ringBuffer: ringBuffer)
     }()
+    private var stopTask: Task<Void, Never>?
 
     // MARK: - Callback Wiring
 
     func start() async {
         guard !isRunning else { return }
+
+        // A quick stop/start must not race the previous engine shutdown.
+        await stopTask?.value
+        stopTask = nil
+        ringBuffer.reset()
+        transcriptOutput.clear()
         isRunning = true
 
         // 1. Request microphone permission
@@ -57,7 +64,12 @@ final class LiveCaptionService: ObservableObject {
             try await engine.loadModel(
                 modelPath: modelPath.path,
                 vadModelPath: vadModelPath,
-                language: settings.language
+                language: settings.language,
+                vadMode: settings.vadMode,
+                vadThreshold: Float(settings.captionsSilenceThreshold),
+                stepMs: Int(settings.captionsStreamInterval * 1_000),
+                lengthMs: Int(settings.captionsWindowSeconds * 1_000),
+                nThreads: settings.engineThreads
             )
         } catch {
             transcriptOutput.engineState = .error(error.localizedDescription)
@@ -111,13 +123,15 @@ final class LiveCaptionService: ObservableObject {
         guard isRunning else { return }
         isRunning = false
 
-        // Stop engine first (aborts current inference)
-        Task {
-            await engine.stop()
-        }
-
-        // Stop audio capture
+        // Stop the producer before resetting storage, then wait for inference
+        // to observe its abort flag before making a later start possible.
         audioCapture.stop()
+
+        stopTask = Task { [weak self] in
+            guard let self else { return }
+            await engine.stop()
+            ringBuffer.reset()
+        }
 
         // Clear transcript
         transcriptOutput.clear()

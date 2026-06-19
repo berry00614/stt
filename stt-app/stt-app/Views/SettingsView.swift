@@ -12,7 +12,6 @@ struct SettingsView: View {
     @AppStorage("captions_font_size") private var fontSize = 20.0
     @AppStorage("captions_max_lines") private var maxLines = 3.0
     @AppStorage("captions_window_opacity") private var windowOpacity = 0.85
-    @AppStorage("auto_start_server") private var autoStartServer = false
 
     @State private var availableModels: [String] = []
     @State private var hasAccessibility: Bool = false
@@ -59,8 +58,6 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.menu)
 
-                Toggle("Auto-start server on launch", isOn: $autoStartServer)
-                    .help("Keep whisper-server running for faster first dictation")
             } header: {
                 Text("Model & Language")
             }
@@ -199,10 +196,4 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
     }
-}
-
-// MARK: - Preview
-
-#Preview {
-    SettingsView()
 }

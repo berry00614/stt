@@ -18,7 +18,7 @@ stt/
 │       ├── Services/
 │       │   ├── LiveCaptionService.swift   # 实时字幕协调器（进程内 pipeline）
 │       │   ├── WhisperEngine.swift        # whisper.cpp C API Swift actor 封装
-│       │   ├── AudioRingBuffer.swift      # 无锁 SPSC f32 PCM 环形缓冲区
+│       │   ├── AudioRingBuffer.swift      # 同步 SPSC f32 PCM 环形缓冲区
 │       │   ├── TranscriptOutput.swift     # @MainActor UI 桥接（displayText/isSpeaking）
 │       │   ├── DictationService.swift     # 一键通（录音→转写→粘贴）
 │       │   ├── FileTranscriptionService.swift # 文件转写（AVFoundation→WAV→whisper-cli）
@@ -126,14 +126,14 @@ stt/
 - `stt_appApp.swift`：入口点，AppDelegate 管理生命周期、热键、Dock 可见性、权限提示。持有 `LiveCaptionService`、`DictationService`、`FileTranscriptionService` 三个顶层服务
 - `LiveCaptionService`：实时字幕顶层协调器（`@MainActor`）。组装 `AudioCaptureService → AudioRingBuffer → WhisperEngine → TranscriptOutput`。`start()` 负责权限→模型加载→音频→引擎启动；`stop()` 负责逆序停止
 - `WhisperEngine`：Swift `actor` 封装 whisper.cpp C API。管理 `whisper_context *` 生命周期（`whisper_init_from_file_with_params` / `whisper_free`）。运行滑动窗口 `whisper_full()`（默认 step=1.5s, length=10s, keep=200ms），`single_segment=true`，`no_context=false` 上下文链接。内置 Silero 神经 VAD（`whisper_vad_detect_speech_no_reset`）或能量 VAD 回退。通过 `onTranscript` / `onStateChange` / `onSpeakingChange` 回调输出结果
-- `AudioRingBuffer`：无锁 SPSC 环形缓冲区（`@unchecked Sendable`）。`UnsafeMutableBufferPointer<Float>` 底层存储，`os_unfair_lock` 保护读写指针。Audio 线程写，WhisperEngine actor 读。固定容量 30s × 16kHz = 480,000 samples
+- `AudioRingBuffer`：同步 SPSC 环形缓冲区（`@unchecked Sendable`）。`UnsafeMutableBufferPointer<Float>` 底层存储，单个 `os_unfair_lock` 原子发布采样数据与索引，避免读取未完成写入的数据。Audio 线程写，WhisperEngine actor 读。固定容量 30s × 16kHz = 480,000 samples
 - `TranscriptOutput`：`@MainActor ObservableObject`，作为 WhisperEngine（后台 actor）和 SwiftUI 之间的桥接。持有 `@Published displayText`（滚动窗口最后 8 段拼接）、`isSpeaking`、`engineState`
 - `DictationService`：一键通状态机（idle → recording → transcribing → done/error → idle）。`startRecording()` 和 `stopAndTranscribe()` 为非 private，支持主窗口 UI 按钮调用。支持 hold（按住录/松开关）和 click（按一下开/按一下关）两种模式，由 `AppSettings.dictationMode` 控制
 - `FileTranscriptionService`：文件转写，`selectFile()` 调用 NSOpenPanel，`transcribe()` 用 `Task.detached` + `nonisolated` 静态方法在后台完成 AVFoundation 音频转换（→ 16kHz mono WAV）和 whisper-cli 调用
 - `AudioCaptureService`：AVAudioEngine 封装。输出双格式：f32 PCM（`onAudioChunkFloats` 回调 → LiveCaptionService）和 Int16 PCM（`accumulatedData` → DictationService）
 - `AntiHallucination`：两层过滤 — VAD 能量门控（`hasSpeech`，5 个连续 0.1s 帧 RMS > 阈值）、模式匹配过滤（音效描述、非 CJK 垃圾、替换字符）。`hasSpeech`、`audioRMS`、`buildWAV` 均为 nonisolated
 - `TextNormalizer`：ICU `Hant-Hans` 繁→简转换 + 标点规范化
-- `AppSettings`：`@AppStorage` 持久化配置。新增 engine 配置项（`engineBackend`、`vadMode`、`vadThreshold`、`engineStepMs`/`engineLengthMs`/`engineKeepMs`、`engineThreads`）。静态路径解析方法（`whisperCppRoot`、`whisperVadModelPath`、`modelsDirectory` 等）均为 nonisolated，可从后台任务安全调用
+- `AppSettings`：`@AppStorage` 持久化配置。实时字幕使用 `captionsStreamInterval`、`captionsWindowSeconds`、`captionsSilenceThreshold`、`vadMode`、`engineThreads` 配置原生引擎。静态路径解析方法（`whisperCppRoot`、`whisperVadModelPath`、`modelsDirectory` 等）均为 nonisolated，可从后台任务安全调用
 - `HotkeyMonitor`：`NSEvent.addGlobalMonitorForEvents(.flagsChanged)` 监听右 Option 键，支持 hold（按住阈值后触发）和 click（按一下切换）两种模式
 - `PasteController`：先尝试 `NSPasteboard` + `CGEventPost Cmd+V`，失败则写剪贴板
 - `MainWindowView`：主窗口内容，三个 `CardView`（听写/字幕/文件转写），每个卡片有独立模型 `Picker`（听写用 `modelName`，字幕用 `streamModelName`）

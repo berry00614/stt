@@ -70,6 +70,7 @@ if [ -f "$WHISPER_DIR/build/bin/whisper-cli" ]; then
     else
         cmake -B "$WHISPER_DIR/build" \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=14.6 \
             -DWHISPER_COREML=ON \
             -DWHISPER_COREML_ALLOW_FALLBACK=ON \
             -S "$WHISPER_DIR"
@@ -79,6 +80,7 @@ if [ -f "$WHISPER_DIR/build/bin/whisper-cli" ]; then
 else
     cmake -B "$WHISPER_DIR/build" \
         -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_OSX_DEPLOYMENT_TARGET=14.6 \
         -DWHISPER_COREML=ON \
         -DWHISPER_COREML_ALLOW_FALLBACK=ON \
         -S "$WHISPER_DIR"

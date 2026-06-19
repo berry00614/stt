@@ -49,32 +49,11 @@ final class AppSettings {
     @AppStorage("captions_window_opacity")
     var captionsWindowOpacity: Double = 0.85
 
-    // MARK: - Server
-
-    @AppStorage("auto_start_server")
-    var autoStartServer: Bool = false
-
     // MARK: - Native Engine (whisper.cpp C API)
-
-    /// Whether to use the native in-process engine ("native") or legacy whisper-server ("server").
-    @AppStorage("engine_backend")
-    var engineBackend: String = "native"
 
     /// VAD mode: "silero" (neural), "energy" (RMS-based), or "none".
     @AppStorage("vad_mode")
     var vadMode: String = "silero"
-
-    @AppStorage("vad_threshold")
-    var vadThreshold: Double = 0.6
-
-    @AppStorage("engine_step_ms")
-    var engineStepMs: Int = 1500
-
-    @AppStorage("engine_length_ms")
-    var engineLengthMs: Int = 10000
-
-    @AppStorage("engine_keep_ms")
-    var engineKeepMs: Int = 200
 
     @AppStorage("engine_threads")
     var engineThreads: Int = 4

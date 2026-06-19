@@ -109,7 +109,6 @@ enum TextNormalizer {
         var result = text
 
         // Remove space before punctuation (Chinese style)
-        let punctSet = CharacterSet(charactersIn: ".,!?;:。，！？；：、")
         let spaceBeforeReplacements = [
             " ,": ",", " .": ".", " !": "!", " ?": "?",
             " 。": "。", " ，": "，", " ！": "！", " ？": "？"

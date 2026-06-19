@@ -161,8 +161,26 @@ final class DictationService: ObservableObject {
         guard let modelPath = AppSettings.shared.resolvedModelPath() else {
             throw DictationError.modelNotFound(AppSettings.shared.modelName)
         }
+        let language = AppSettings.shared.language
 
-        // Write WAV to temp file
+        return try await Task.detached(priority: .userInitiated) {
+            try Self.runWhisperCLI(
+                pcmData: pcmData,
+                cliPath: cliPath,
+                modelPath: modelPath,
+                language: language
+            )
+        }.value
+    }
+
+    /// Blocking file and subprocess work must stay off the main actor so the
+    /// menu bar, HUD, and windows remain responsive during inference.
+    private nonisolated static func runWhisperCLI(
+        pcmData: Data,
+        cliPath: URL,
+        modelPath: URL,
+        language: String
+    ) throws -> String {
         let tempDir = FileManager.default.temporaryDirectory
         let tempWav = tempDir.appendingPathComponent("stt_dictation_\(UUID().uuidString).wav")
 
@@ -179,7 +197,7 @@ final class DictationService: ObservableObject {
         process.arguments = [
             "-m", modelPath.path,
             "-f", tempWav.path,
-            "-l", AppSettings.shared.language,
+            "-l", language,
             "--no-timestamps",
             "-otxt",
         ]

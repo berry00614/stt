@@ -40,11 +40,12 @@ actor WhisperEngine {
     // MARK: - Configuration
 
     private var language: String = "auto"
+    private var vadMode: String = "silero"
+    private var vadThreshold: Float = 0.01
 
     /// Sliding window parameters (in milliseconds).
     private var stepMs: Int = 1500     // process every 1.5s of new audio (lower = less latency)
     private var lengthMs: Int = 10000  // keep 10s context window
-    private var keepMs: Int = 200      // 200ms overlap between windows
 
     /// Number of threads for inference.
     private var nThreads: Int = 4
@@ -110,11 +111,36 @@ actor WhisperEngine {
     ///   - vadModelPath: Optional path to Silero VAD ggml model. If nil, falls back to energy-based VAD.
     ///   - language: Language code ("zh", "en", "auto"). Default "auto".
     /// - Throws: WhisperError if model loading fails.
-    func loadModel(modelPath: String, vadModelPath: String? = nil, language: String = "auto") throws {
+    func loadModel(
+        modelPath: String,
+        vadModelPath: String? = nil,
+        language: String = "auto",
+        vadMode: String = "silero",
+        vadThreshold: Float = 0.01,
+        stepMs: Int = 1500,
+        lengthMs: Int = 10000,
+        nThreads: Int = 4
+    ) throws {
         setState(.loading)
 
         // Save configuration
         self.language = language
+        self.vadMode = vadMode
+        self.vadThreshold = vadThreshold
+        self.stepMs = max(300, stepMs)
+        self.lengthMs = max(self.stepMs, lengthMs)
+        self.nThreads = max(1, nThreads)
+
+        // A new start may select a different model or VAD. Release old
+        // contexts before replacing them to avoid retaining model memory.
+        if let oldCtx = ctx {
+            whisper_free(oldCtx)
+            ctx = nil
+        }
+        if let oldVadCtx = vadCtx {
+            whisper_vad_free(oldVadCtx)
+            vadCtx = nil
+        }
 
         // --- Load whisper model ---
         var cparams = whisper_context_default_params()
@@ -128,7 +154,7 @@ actor WhisperEngine {
         self.ctx = ctx
 
         // --- Load VAD model (optional) ---
-        if let vadPath = vadModelPath {
+        if vadMode == "silero", let vadPath = vadModelPath {
             let vadCParams = whisper_vad_default_context_params()
             if let vad = vadPath.withCString({ whisper_vad_init_from_file_with_params($0, vadCParams) }) {
                 self.vadCtx = vad
@@ -137,7 +163,7 @@ actor WhisperEngine {
                 // Non-fatal: VAD failed, will use energy-based fallback
                 print("[WhisperEngine] VAD model failed to load, using energy-based fallback")
             }
-        } else {
+        } else if vadMode == "silero" {
             print("[WhisperEngine] No VAD model path provided, using energy-based fallback")
         }
 
@@ -197,7 +223,7 @@ actor WhisperEngine {
         // keepSamples handled implicitly by keeping last lengthSamples
 
         var silenceCount = 0
-        let maxSilenceSteps = 6  // After ~18s of silence (6 × 3s steps), pause processing
+        let maxSilenceSteps = max(1, 9_000 / stepMs)
 
         while isRunning {
             // 1. Wait for enough audio in ring buffer
@@ -304,29 +330,24 @@ actor WhisperEngine {
         wparams.logprob_thold = -1.0
         wparams.no_speech_thold = 0.6
 
-        // Context chaining: pass accumulated prompt tokens
-        var promptPtr: UnsafePointer<whisper_token>? = nil
-        var promptCount: Int32 = 0
-        if !promptTokens.isEmpty {
-            promptPtr = promptTokens.withUnsafeBufferPointer { $0.baseAddress }
-            promptCount = Int32(promptTokens.count)
-        }
-
         // Abort callback
         wparams.abort_callback = whisper_abort_callback_trampoline
         wparams.abort_callback_user_data = UnsafeMutableRawPointer(abortFlag)
 
-        // Run inference
-        let result: Int32 = samples.withUnsafeBufferPointer { samplePtr in
-            var wp = wparams
-            wp.prompt_tokens = promptPtr
-            wp.prompt_n_tokens = promptCount
-            return whisper_full(ctx, wp, samplePtr.baseAddress, Int32(samples.count))
+        defer {
+            if let languagePointer = wparams.language {
+                free(UnsafeMutableRawPointer(mutating: languagePointer))
+            }
         }
 
-        // Clean up
-        if wparams.language != nil && language != "auto" {
-            free(UnsafeMutableRawPointer(mutating: wparams.language))
+        // Keep both array-backed pointers valid for the complete C call.
+        let result: Int32 = promptTokens.withUnsafeBufferPointer { promptBuffer in
+            samples.withUnsafeBufferPointer { sampleBuffer in
+                var wp = wparams
+                wp.prompt_tokens = promptBuffer.baseAddress
+                wp.prompt_n_tokens = Int32(promptBuffer.count)
+                return whisper_full(ctx, wp, sampleBuffer.baseAddress, Int32(sampleBuffer.count))
+            }
         }
 
         // Check result
@@ -366,8 +387,12 @@ actor WhisperEngine {
     /// Detect whether speech is present in the given audio samples.
     /// Returns true if speech is detected.
     private func detectSpeech(samples: [Float]) -> Bool {
+        if vadMode == "none" {
+            return true
+        }
+
         // If Silero VAD is loaded, use neural VAD
-        if let vctx = vadCtx {
+        if vadMode == "silero", let vctx = vadCtx {
             return samples.withUnsafeBufferPointer { ptr in
                 whisper_vad_detect_speech_no_reset(vctx, ptr.baseAddress, Int32(ptr.count))
             }
@@ -380,7 +405,7 @@ actor WhisperEngine {
             return Int16(clamped * 32767.0)
         }
         let int16Data = Data(bytes: int16Samples, count: int16Samples.count * MemoryLayout<Int16>.size)
-        return AntiHallucination.hasSpeech(int16Data, threshold: 0.01, minFrames: 5)
+        return AntiHallucination.hasSpeech(int16Data, threshold: vadThreshold, minFrames: 5)
     }
 }
 
