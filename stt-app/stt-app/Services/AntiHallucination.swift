@@ -32,7 +32,7 @@ enum AntiHallucination {
 
     /// Root mean square energy of 16-bit PCM audio (0.0 = silence).
     /// Port of `_audio_rms()` in stt.
-    static func audioRMS(_ pcmData: Data) -> Float {
+    nonisolated static func audioRMS(_ pcmData: Data) -> Float {
         guard pcmData.count >= 2 else { return 0.0 }
         let samples = pcmData.withUnsafeBytes { ptr -> [Int16] in
             let count = pcmData.count / 2
@@ -49,7 +49,7 @@ enum AntiHallucination {
 
     /// True if enough 0.1s frames exceed threshold (requires sustained speech).
     /// Port of `_has_speech()` in stt.
-    static func hasSpeech(
+    nonisolated static func hasSpeech(
         _ pcmData: Data,
         threshold: Float = 0.01,
         minFrames: Int = 5

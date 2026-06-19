@@ -54,6 +54,31 @@ final class AppSettings {
     @AppStorage("auto_start_server")
     var autoStartServer: Bool = false
 
+    // MARK: - Native Engine (whisper.cpp C API)
+
+    /// Whether to use the native in-process engine ("native") or legacy whisper-server ("server").
+    @AppStorage("engine_backend")
+    var engineBackend: String = "native"
+
+    /// VAD mode: "silero" (neural), "energy" (RMS-based), or "none".
+    @AppStorage("vad_mode")
+    var vadMode: String = "silero"
+
+    @AppStorage("vad_threshold")
+    var vadThreshold: Double = 0.6
+
+    @AppStorage("engine_step_ms")
+    var engineStepMs: Int = 1500
+
+    @AppStorage("engine_length_ms")
+    var engineLengthMs: Int = 10000
+
+    @AppStorage("engine_keep_ms")
+    var engineKeepMs: Int = 200
+
+    @AppStorage("engine_threads")
+    var engineThreads: Int = 4
+
     // MARK: - Path Resolution
 
     /// Resolves the whisper.cpp project root.
@@ -117,6 +142,19 @@ final class AppSettings {
         guard let modelsDir = Self.modelsDirectory() else { return nil }
         let path = modelsDir.appendingPathComponent(name ?? modelName)
         return FileManager.default.fileExists(atPath: path.path) ? path : nil
+    }
+
+    /// Resolves the VAD model path (looks for ggml-vad-*.bin in models/).
+    static func whisperVadModelPath() -> URL? {
+        guard let modelsDir = modelsDirectory() else { return nil }
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: modelsDir,
+            includingPropertiesForKeys: nil
+        ) else { return nil }
+        return contents.first { name in
+            let fn = name.lastPathComponent
+            return fn.hasPrefix("ggml-silero") && fn.hasSuffix(".bin")
+        }
     }
 
     /// Lists available model files in the models directory.

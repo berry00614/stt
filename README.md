@@ -11,11 +11,11 @@
 ## Features
 
 - **Fully Offline** — No internet connection required. Your audio never leaves your machine.
-- **Low Latency** — Sliding-window streaming via whisper-server (model stays resident in memory). Text appears in under 500ms.
+- **Low Latency** — In-process sliding-window streaming via whisper.cpp C API (no HTTP server, no subprocess). Text appears with ~1.5s latency.
 - **Anti-Hallucination** — Three-layer protection (energy gating, speech probability threshold, pattern-matching filter). Silence stays silent.
 - **Native Acceleration** — CoreML (ANE), Metal (GPU), and Accelerate (BLAS) on all Apple Silicon chips.
 - **Multi-language** — Auto-detects 99 languages including Chinese, English, Japanese, and more.
-- **macOS App** — Menu bar icon, global hotkey dictation, floating live captions (NSPanel), and file transcription.
+- **macOS App** — Menu bar icon, global hotkey dictation, floating live captions (NSPanel), file transcription, and native VAD (Silero neural + energy fallback).
 - **Agent-Friendly** — JSON output, CLI-first design, ready for integration with LLM tools.
 
 ## Quick Start
@@ -122,7 +122,7 @@ The native macOS menu bar app provides one-click voice input with a global hotke
 | Feature | Description |
 |---------|-------------|
 | **Dictation** | Click the record button or use the right Option hotkey (hold/click mode). Auto-pastes transcribed text. |
-| **Live Captions** | Floating overlay window (NSPanel) that displays real-time streaming transcriptions. |
+| **Live Captions** | Floating overlay window (NSPanel) with real-time streaming transcription via in-process whisper.cpp C API (no HTTP server). Auto-scrolls to show the latest text. VAD gates inference to save CPU during silence. |
 | **File Transcription** | Select an audio file, and the app converts it (AVFoundation → WAV) and transcribes it via whisper-cli. |
 | **Model Selection** | Choose separate models for dictation and live captions from the main window. |
 | **Anti-Hallucination** | Three-layer filter: energy gating, speech probability threshold, and pattern-matching hallucination cleanup. |
@@ -151,16 +151,16 @@ Main Window ──── Dictation / Live Captions / File Transcription
     │   └── Click record button or press right Option (hold/click mode)
     │       │  PCM stream (AVAudioEngine)
     │       ▼
-    │    Build WAV → whisper-cli → transcribe + paste
+    │    Build WAV → whisper-cli subprocess → transcribe + paste
     │
     ├── Live Captions
-    │   └── whisper-server (resident in memory)
-    │       │  HTTP POST /inference
+    │   └── whisper.cpp C API (in-process, no subprocess)
+    │       │  Mic → RingBuffer (f32) → VAD (Silero neural) → whisper_full (sliding window)
     │       ▼
-    │   TranscriptionService → CaptionOverlayView (floating NSPanel)
+    │   LiveCaptionService → WhisperEngine → TranscriptOutput → CaptionOverlayView (NSPanel)
     │
     └── File Transcription
-        └── Select file → AVFoundation convert to WAV → whisper-cli → result
+        └── Select file → AVFoundation convert to WAV → whisper-cli subprocess → result
 
 All transcriptions pass through AntiHallucination + TextNormalizer.
 ```
@@ -183,41 +183,70 @@ xcodebuild -project stt-app.xcodeproj -scheme "STT for Mac" -configuration Relea
 ├── stt-app/                   # macOS menu bar app (SwiftUI + AppKit)
 │   ├── stt-app.xcodeproj/     # Xcode project
 │   └── stt-app/
-│       ├── Models/            # AppSettings, TranscriptionChunk
-│       ├── Services/          # Audio capture, transcription, hotkey, paste, anti-hallucination
-│       └── Views/             # Main window, menu bar, captions, HUD, settings
+│       ├── whisper_bridge.h   # C bridging header (imports whisper.cpp C API)
+│       ├── whisper_bridge.c   # C callback trampolines + atomic helpers
+│       ├── Models/
+│       │   └── AppSettings.swift  # UserDefaults configuration
+│       ├── Services/
+│       │   ├── LiveCaptionService.swift   # Live caption coordinator (in-process pipeline)
+│       │   ├── WhisperEngine.swift        # whisper.cpp C API Swift actor wrapper
+│       │   ├── AudioRingBuffer.swift      # Lock-free SPSC f32 PCM ring buffer
+│       │   ├── TranscriptOutput.swift     # @MainActor UI bridge for transcript text
+│       │   ├── DictationService.swift     # Push-to-talk dictation (recording → transcribe → paste)
+│       │   ├── FileTranscriptionService.swift # File transcription (AVFoundation → WAV → whisper-cli)
+│       │   ├── AudioCaptureService.swift  # AVAudioEngine microphone (f32 + Int16 output)
+│       │   ├── HotkeyMonitor.swift        # Carbon global hotkey (Right Option)
+│       │   ├── PasteController.swift      # CGEventPost Cmd+V paste
+│       │   ├── AntiHallucination.swift    # Hallucination filtering (energy + pattern matching)
+│       │   └── TextNormalizer.swift       # Hant→Hans + punctuation normalization
+│       └── Views/
+│           ├── MainWindowView.swift         # Main window (dictation/captions/file cards)
+│           ├── MenuBarView.swift            # Menu bar dropdown
+│           ├── SettingsView.swift           # Settings scene (⌘,)
+│           ├── CaptionOverlayView.swift     # Floating caption content (auto-scroll)
+│           ├── CaptionWindowController.swift # NSPanel caption window management
+│           ├── DictationHUDView.swift       # Recording/transcription status HUD
+│           └── HUDPanelController.swift     # HUD panel management
 ├── whisper.cpp/               # whisper.cpp engine (upstream)
-│   ├── build/bin/
-│   │   ├── whisper-cli        # Batch transcription binary
-│   │   └── whisper-server     # HTTP streaming server
+│   ├── build/
+│   │   ├── bin/
+│   │   │   └── whisper-cli    # Batch transcription binary (used by Dictation/File)
+│   │   └── src/
+│   │       └── libwhisper.dylib  # Core library (linked by app for live caption)
 │   └── models/
-│       └── ggml-small.bin     # Default model
+│       ├── ggml-small.bin              # Default model (466MB)
+│       ├── ggml-silero-v5.1.2.bin     # Silero VAD model (864KB)
+│       └── download-ggml-model.sh     # Model download script
 ├── CLAUDE.md                  # Project documentation (for Claude Code)
 └── README.md
 ```
 
 ## Architecture
 
-### CLI Pipeline
+### App Live Caption Pipeline
 
 ```
-ffmpeg (avfoundation)
-    │  raw s16le PCM pipe
+Microphone (AVAudioEngine, 48kHz)
+    │  AVAudioConverter → 16kHz mono f32
     ▼
-accumulating ring buffer
-    │  build WAV + POST every 0.5s
-    ▼
-whisper-server (model loaded once, resident)
-    │  POST /inference → {"text": "..."}
-    ▼
-Three-layer output guard ──► stdout
+AudioRingBuffer (lock-free SPSC, 30s capacity)
+    │
+    ├── VAD (Silero neural VAD or energy-based fallback)
+    │      │  whisper_vad_detect_speech_no_reset()
+    │      ▼
+    └── WhisperEngine (whisper_full, sliding window 1.5s step / 10s context)
+           │  single_segment=true, no_context=false (context chaining)
+           ▼
+       TranscriptOutput (@MainActor ObservableObject)
+           │  @Published displayText
+           ▼
+       CaptionOverlayView (NSPanel, auto-scroll to latest text)
 ```
 
-### Anti-Hallucination (Three Layers)
+### Anti-Hallucination (Two Layers)
 
-1. **Energy Gating** — Short-frame scan (5 consecutive 0.1s frames with RMS > threshold) filters transient noise.
-2. **whisper no-speech-thold** — Server-side speech probability threshold at 0.5.
-3. **Pattern Matching** — Filters sound-effect descriptions (`(keyboard clicking)`), non-CJK/non-Latin garbage, and replacement characters (`�`).
+1. **VAD Gating** — Silero neural VAD (preferred) or energy-based RMS scan (fallback) for speech detection.
+2. **Pattern Matching** — Filters sound-effect descriptions (`(keyboard clicking)`), non-CJK/non-Latin garbage, and replacement characters (`�`).
 
 ### Hardware Acceleration
 

@@ -4,7 +4,7 @@ import Combine
 /// NSApplicationDelegate for menu bar app lifecycle and permission setup.
 final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     let dictationService = DictationService()
-    let transcriptionService = TranscriptionService()
+    let liveCaptionService = LiveCaptionService()
     let captionWindowController = CaptionWindowController()
     let hudController = HUDPanelController()
     let fileTranscriptionService = FileTranscriptionService()
@@ -36,7 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        transcriptionService.stop()
+        liveCaptionService.stop()
         captionWindowController.close()
         hudController.hide()
     }
@@ -136,13 +136,13 @@ struct STTForMacApp: App {
         MenuBarExtra {
             MenuBarView(
                 dictationService: appDelegate.dictationService,
-                transcriptionService: appDelegate.transcriptionService,
+                liveCaptionService: appDelegate.liveCaptionService,
                 captionWindowController: appDelegate.captionWindowController
             )
         } label: {
             let isActive = appDelegate.dictationService.state == .recording ||
                            appDelegate.dictationService.state == .transcribing ||
-                           appDelegate.transcriptionService.isRunning
+                           appDelegate.liveCaptionService.isRunning
 
             Image(systemName: isActive ? "mic.fill" : "mic")
                 .symbolRenderingMode(isActive ? .hierarchical : .monochrome)
@@ -159,7 +159,7 @@ struct STTForMacApp: App {
         Window("STT for Mac", id: "main") {
             MainWindowView(
                 dictationService: appDelegate.dictationService,
-                transcriptionService: appDelegate.transcriptionService,
+                liveCaptionService: appDelegate.liveCaptionService,
                 captionWindowController: appDelegate.captionWindowController,
                 fileTranscriptionService: appDelegate.fileTranscriptionService
             )

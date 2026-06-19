@@ -4,7 +4,7 @@ import SwiftUI
 /// Dictation, Live Captions, and File Transcription.
 struct MainWindowView: View {
     @ObservedObject var dictationService: DictationService
-    @ObservedObject var transcriptionService: TranscriptionService
+    @ObservedObject var liveCaptionService: LiveCaptionService
     @ObservedObject var captionWindowController: CaptionWindowController
     @ObservedObject var fileTranscriptionService: FileTranscriptionService
 
@@ -219,14 +219,14 @@ struct MainWindowView: View {
     private var captionsCard: some View {
         CardView(
             icon: "captions.bubble",
-            iconColor: transcriptionService.isRunning ? .green : .gray,
+            iconColor: liveCaptionService.isRunning ? .green : .gray,
             title: "Live Captions",
             subtitle: captionsSubtitle,
             statusColor: captionsStatusColor,
             statusText: captionsStatusText
         ) {
             // Model picker (only when stopped)
-            if !transcriptionService.isRunning && !transcriptionService.serverManager.isLoading {
+            if !liveCaptionService.isRunning && !(liveCaptionService.transcriptOutput.engineState == .loading) {
                 modelPickerRow(
                     label: "Model:",
                     selection: Binding(
@@ -239,17 +239,17 @@ struct MainWindowView: View {
 
             HStack(spacing: 8) {
                 // Start/Stop button
-                if transcriptionService.serverManager.isLoading {
+                if liveCaptionService.transcriptOutput.engineState == .loading {
                     HStack(spacing: 4) {
                         ProgressView()
                             .scaleEffect(0.7)
                         Button("Cancel") {
-                            transcriptionService.stop()
+                            liveCaptionService.stop()
                         }
                     }
-                } else if transcriptionService.isRunning {
+                } else if liveCaptionService.isRunning {
                     Button(action: {
-                        transcriptionService.stop()
+                        liveCaptionService.stop()
                         captionWindowController.close()
                     }) {
                         Label("Stop Captions", systemImage: "stop.circle")
@@ -267,11 +267,11 @@ struct MainWindowView: View {
                     }
                 } else {
                     Button(action: {
-                        captionWindowController.open(transcriptionService: transcriptionService)
+                        captionWindowController.open(transcriptOutput: liveCaptionService.transcriptOutput)
                     }) {
                         Label("Show Window", systemImage: "eye")
                     }
-                    .disabled(!transcriptionService.isRunning)
+                    .disabled(!liveCaptionService.isRunning)
                 }
             }
 
@@ -284,19 +284,27 @@ struct MainWindowView: View {
             }
 
             // Live text display
-            if transcriptionService.isRunning {
-                ScrollView {
-                    Text(transcriptionService.displayText.isEmpty
-                         ? "Listening…"
-                         : transcriptionService.displayText)
-                        .font(.system(size: 13))
-                        .foregroundColor(transcriptionService.displayText.isEmpty
-                                        ? .secondary : .primary)
-                        .italic(transcriptionService.displayText.isEmpty)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
+            if liveCaptionService.isRunning {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        Text(liveCaptionService.transcriptOutput.displayText.isEmpty
+                             ? "Listening…"
+                             : liveCaptionService.transcriptOutput.displayText)
+                            .font(.system(size: 13))
+                            .foregroundColor(liveCaptionService.transcriptOutput.displayText.isEmpty
+                                            ? .secondary : .primary)
+                            .italic(liveCaptionService.transcriptOutput.displayText.isEmpty)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                            .id("mainTranscript")
+                    }
+                    .frame(minHeight: 40, maxHeight: 120)
+                    .onChange(of: liveCaptionService.transcriptOutput.displayText) {
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            proxy.scrollTo("mainTranscript", anchor: .bottom)
+                        }
+                    }
                 }
-                .frame(minHeight: 40, maxHeight: 120)
                 .padding(8)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
@@ -307,9 +315,9 @@ struct MainWindowView: View {
     }
 
     private var captionsSubtitle: String {
-        if transcriptionService.serverManager.isLoading {
-            return "Starting whisper-server…"
-        } else if transcriptionService.isRunning {
+        if liveCaptionService.transcriptOutput.engineState == .loading {
+            return "Loading whisper model…"
+        } else if liveCaptionService.isRunning {
             return "Streaming live transcription"
         } else {
             return "Continuous real-time captions from microphone"
@@ -317,25 +325,25 @@ struct MainWindowView: View {
     }
 
     private var captionsStatusColor: Color {
-        switch transcriptionService.serverManager.serverState {
-        case .stopped: return .gray.opacity(0.4)
-        case .starting: return .orange
-        case .ready: return transcriptionService.isRunning ? .green : .blue
+        switch liveCaptionService.transcriptOutput.engineState {
+        case .idle: return .gray.opacity(0.4)
+        case .loading: return .orange
+        case .ready: return liveCaptionService.isRunning ? .green : .blue
         case .error: return .red
         }
     }
 
     private var captionsStatusText: String {
-        switch transcriptionService.serverManager.serverState {
-        case .stopped: return "Off"
-        case .starting: return "Starting…"
-        case .ready: return transcriptionService.isRunning ? "Active" : "Ready"
+        switch liveCaptionService.transcriptOutput.engineState {
+        case .idle: return "Off"
+        case .loading: return "Loading…"
+        case .ready: return liveCaptionService.isRunning ? "Active" : "Ready"
         case .error: return "Error"
         }
     }
 
     private var captionsErrorMessage: String? {
-        if case .error(let msg) = transcriptionService.serverManager.serverState {
+        if case .error(let msg) = liveCaptionService.transcriptOutput.engineState {
             return msg.count > 100 ? String(msg.prefix(100)) + "…" : msg
         }
         return nil
@@ -368,9 +376,9 @@ struct MainWindowView: View {
 
     private func startCaptions() {
         Task { @MainActor in
-            await transcriptionService.start()
-            if transcriptionService.isRunning {
-                captionWindowController.open(transcriptionService: transcriptionService)
+            await liveCaptionService.start()
+            if liveCaptionService.isRunning {
+                captionWindowController.open(transcriptOutput: liveCaptionService.transcriptOutput)
             }
         }
     }

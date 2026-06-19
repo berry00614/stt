@@ -3,7 +3,7 @@ import SwiftUI
 /// Content for the MenuBarExtra menu.
 struct MenuBarView: View {
     @ObservedObject var dictationService: DictationService
-    @ObservedObject var transcriptionService: TranscriptionService
+    @ObservedObject var liveCaptionService: LiveCaptionService
     let captionWindowController: CaptionWindowController
 
     @Environment(\.openWindow) private var openWindow
@@ -67,13 +67,13 @@ struct MenuBarView: View {
 
     private var actionsSection: some View {
         Group {
-            // --- Captions server control ---
-            if transcriptionService.serverManager.isLoading {
-                // Starting: show cancel
+            // --- Captions engine control ---
+            if case .loading = liveCaptionService.transcriptOutput.engineState {
+                // Loading: show cancel
                 HStack(spacing: 4) {
                     ProgressView()
                         .scaleEffect(0.6)
-                    Text("Starting server...")
+                    Text("Loading model...")
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
                 }
@@ -81,7 +81,7 @@ struct MenuBarView: View {
                 Button(action: stopCaptions) {
                     Label("Cancel", systemImage: "xmark.circle")
                 }
-            } else if transcriptionService.isRunning {
+            } else if liveCaptionService.isRunning {
                 // Running: show stop
                 Button(action: stopCaptions) {
                     Label("Stop Captions", systemImage: "stop.circle")
@@ -93,7 +93,7 @@ struct MenuBarView: View {
                     }
                 } else {
                     Button(action: {
-                        captionWindowController.open(transcriptionService: transcriptionService)
+                        captionWindowController.open(transcriptOutput: liveCaptionService.transcriptOutput)
                     }) {
                         Label("Show Caption Window", systemImage: "eye")
                     }
@@ -151,19 +151,19 @@ struct MenuBarView: View {
     }
 
     private var captionStatusColor: Color {
-        switch transcriptionService.serverManager.serverState {
-        case .stopped: return .gray.opacity(0.4)
-        case .starting: return .orange
-        case .ready: return transcriptionService.isRunning ? .green : .blue
+        switch liveCaptionService.transcriptOutput.engineState {
+        case .idle: return .gray.opacity(0.4)
+        case .loading: return .orange
+        case .ready: return liveCaptionService.isRunning ? .green : .blue
         case .error: return .red
         }
     }
 
     private var captionStatusText: String {
-        switch transcriptionService.serverManager.serverState {
-        case .stopped: return "Stopped"
-        case .starting: return "Starting..."
-        case .ready: return transcriptionService.isRunning ? "Active" : "Ready"
+        switch liveCaptionService.transcriptOutput.engineState {
+        case .idle: return "Stopped"
+        case .loading: return "Loading..."
+        case .ready: return liveCaptionService.isRunning ? "Active" : "Ready"
         case .error: return "Error"
         }
     }
@@ -175,7 +175,7 @@ struct MenuBarView: View {
     }
 
     private var serverErrorMessage: String? {
-        if case .error(let msg) = transcriptionService.serverManager.serverState {
+        if case .error(let msg) = liveCaptionService.transcriptOutput.engineState {
             // Truncate long messages
             if msg.count > 80 {
                 return String(msg.prefix(80)) + "..."
@@ -189,20 +189,20 @@ struct MenuBarView: View {
 
     private func startCaptions() {
         Task { @MainActor in
-            await transcriptionService.start()
-            if transcriptionService.isRunning {
-                captionWindowController.open(transcriptionService: transcriptionService)
+            await liveCaptionService.start()
+            if liveCaptionService.isRunning {
+                captionWindowController.open(transcriptOutput: liveCaptionService.transcriptOutput)
             }
         }
     }
 
     private func stopCaptions() {
-        transcriptionService.stop()
+        liveCaptionService.stop()
         captionWindowController.close()
     }
 
     private func quit() {
-        transcriptionService.stop()
+        liveCaptionService.stop()
         captionWindowController.close()
         NSApplication.shared.terminate(nil)
     }

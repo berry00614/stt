@@ -11,16 +11,16 @@ final class CaptionWindowController: NSObject, ObservableObject {
     @Published private(set) var isOpen = false
 
     /// Toggle the caption overlay visibility.
-    func toggle(transcriptionService: TranscriptionService) {
+    func toggle(transcriptOutput: TranscriptOutput) {
         if isOpen {
             close()
         } else {
-            open(transcriptionService: transcriptionService)
+            open(transcriptOutput: transcriptOutput)
         }
     }
 
     /// Open the caption overlay.
-    func open(transcriptionService: TranscriptionService) {
+    func open(transcriptOutput: TranscriptOutput) {
         guard !isOpen else { return }
 
         let panel = CaptionPanel(
@@ -52,7 +52,7 @@ final class CaptionWindowController: NSObject, ObservableObject {
         }
 
         let hostingView = NSHostingView(
-            rootView: CaptionOverlayView(transcriptionService: transcriptionService)
+            rootView: CaptionOverlayView(transcriptOutput: transcriptOutput)
         )
         hostingView.autoresizingMask = [.width, .height]
         panel.contentView = hostingView

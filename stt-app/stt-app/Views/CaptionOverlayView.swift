@@ -2,12 +2,16 @@ import SwiftUI
 
 /// The floating live caption text display inside the overlay window.
 struct CaptionOverlayView: View {
-    @ObservedObject var transcriptionService: TranscriptionService
+    @ObservedObject var transcriptOutput: TranscriptOutput
 
     var body: some View {
         VStack(spacing: 0) {
-            if transcriptionService.isRunning {
-                TranscriptionTextView(text: transcriptionService.displayText)
+            if transcriptOutput.isSpeaking || !transcriptOutput.displayText.isEmpty {
+                TranscriptionTextView(text: transcriptOutput.displayText)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+            } else {
+                TranscriptionTextView(text: "")
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
             }
@@ -28,7 +32,7 @@ struct CaptionOverlayView: View {
     }
 }
 
-/// The actual text rendering area with dynamic font size.
+/// The actual text rendering area with dynamic font size and auto-scroll.
 struct TranscriptionTextView: View {
     let text: String
 
@@ -36,21 +40,33 @@ struct TranscriptionTextView: View {
     @AppStorage("captions_max_lines") var maxLines: Int = 3
 
     var body: some View {
-        HStack {
-            if text.isEmpty {
-                Text("Listening...")
-                    .font(.system(size: fontSize, weight: .medium))
-                    .foregroundColor(.secondary.opacity(0.5))
-                    .italic()
-            } else {
-                Text(text)
-                    .font(.system(size: fontSize, weight: .medium))
-                    .foregroundColor(.white)
-                    .lineLimit(maxLines)
-                    .multilineTextAlignment(.center)
+        if text.isEmpty {
+            Text("Listening...")
+                .font(.system(size: fontSize, weight: .medium))
+                .foregroundColor(.secondary.opacity(0.5))
+                .italic()
+                .frame(maxWidth: .infinity, alignment: .center)
+        } else {
+            ScrollViewReader { proxy in
+                ScrollView(.vertical) {
+                    Text(text)
+                        .font(.system(size: fontSize, weight: .medium))
+                        .foregroundColor(.white)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .id("transcriptText")
+                        .padding(.vertical, 4)
+                }
+                .frame(maxHeight: CGFloat(maxLines) * (fontSize + 6))
+                .scrollIndicators(.hidden)
+                .onChange(of: text) {
+                    // Auto-scroll to bottom when new text arrives
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        proxy.scrollTo("transcriptText", anchor: .bottom)
+                    }
+                }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .center)
     }
 }
 

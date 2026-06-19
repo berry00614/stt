@@ -27,8 +27,13 @@ final class AudioCaptureService: ObservableObject {
     /// The accumulated PCM data buffer (for dictation recording).
     private(set) var accumulatedData = Data()
 
-    /// Callback for streaming audio chunks (called from audio tap thread).
+    /// Callback for streaming audio chunks — Int16 PCM (called from audio tap thread).
+    /// Used by DictationService.
     var onAudioChunk: ((Data) -> Void)?
+
+    /// Callback for streaming float32 audio chunks (called from audio tap thread).
+    /// Used by LiveCaptionService (whisper.cpp expects f32 samples).
+    var onAudioChunkFloats: (([Float]) -> Void)?
 
     // MARK: - Lifecycle
 
@@ -44,11 +49,12 @@ final class AudioCaptureService: ObservableObject {
         let inputNode = engine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
 
-        // We want 16kHz mono s16le for whisper.
+        // We want 16kHz mono f32 for whisper.cpp C API.
         // The input format from the mic may differ (e.g. 48kHz float32),
         // so we install a converter tap.
+        // Int16 data for DictationService is derived from the f32 output.
         guard let outputFormat = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
+            commonFormat: .pcmFormatFloat32,
             sampleRate: sampleRate,
             channels: 1,
             interleaved: false
@@ -124,24 +130,31 @@ final class AudioCaptureService: ObservableObject {
             return
         }
 
-        // Extract PCM data from output buffer
-        guard let channelData = outputBuffer.int16ChannelData else { return }
-        let data = Data(
-            bytes: channelData[0],
-            count: Int(outputBuffer.frameLength) * MemoryLayout<Int16>.size
-        )
+        // Extract f32 PCM data from output buffer
+        guard let floatChannelData = outputBuffer.floatChannelData else { return }
+        let frameCount = Int(outputBuffer.frameLength)
+        let floats = Array(UnsafeBufferPointer(start: floatChannelData[0], count: frameCount))
+
+        // Convert f32 → Int16 for DictationService backward compatibility
+        var int16Samples = [Int16](repeating: 0, count: frameCount)
+        for i in 0..<frameCount {
+            let clamped = max(-1.0, min(1.0, floats[i]))
+            int16Samples[i] = Int16(clamped * 32767.0)
+        }
+        let int16Data = Data(bytes: int16Samples, count: frameCount * MemoryLayout<Int16>.size)
 
         // Update accumulated buffer (for dictation)
-        accumulatedData.append(data)
+        accumulatedData.append(int16Data)
 
-        // Update RMS
-        let rms = AntiHallucination.audioRMS(data)
+        // Update RMS from Int16 data
+        let rms = AntiHallucination.audioRMS(int16Data)
         DispatchQueue.main.async { [weak self] in
             self?.currentRMS = rms
         }
 
         // Forward to streaming consumers
-        onAudioChunk?(data)
+        onAudioChunk?(int16Data)
+        onAudioChunkFloats?(floats)
     }
 }
 
